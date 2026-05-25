@@ -358,6 +358,8 @@ for f in uploaded_files:
                                 placeholder="Select one or more values…",
                                 key=f"{filename}__filt_{i}__multi__{col_name}",
                             )
+                            if not filt["values"]:
+                                st.caption("⚠️ No values selected — filter inactive.")
                         else:
                             st.caption("← Select a source column to see available values.")
 
@@ -412,7 +414,8 @@ for f in uploaded_files:
                                             use_container_width=True,
                                         ):
                                             filt["values"].pop(global_idx)
-                                st.rerun()
+                        else:
+                            st.caption("⚠️ No values added — filter inactive.")
 
             for i in reversed(to_remove):
                 config["filters"].pop(i)
@@ -489,13 +492,26 @@ for f in uploaded_files:
                 st.dataframe(df.head(10), use_container_width=True)
 
             with sub2:
+                prev_key = f"{filename}__preview_result"
+                prev_err = f"{filename}__preview_error"
+
                 if st.button("▶ Run preview", key=f"{filename}__preview_btn"):
                     try:
                         out = process_dataframe(df, config)
-                        st.dataframe(out.head(50), use_container_width=True)
-                        st.caption(f"{len(out):,} rows after filters · {len(out.columns)} columns")
+                        st.session_state[prev_key] = out
+                        st.session_state[prev_err] = None
                     except Exception as e:
-                        st.error(f"Processing error: {e}")
+                        st.session_state[prev_key] = None
+                        st.session_state[prev_err] = str(e)
+
+                if st.session_state.get(prev_err):
+                    st.error(f"Processing error: {st.session_state[prev_err]}")
+                elif prev_key in st.session_state and st.session_state[prev_key] is not None:
+                    out = st.session_state[prev_key]
+                    st.dataframe(out.head(50), use_container_width=True)
+                    st.caption(f"{len(out):,} rows · {len(out.columns)} cols — click ▶ to refresh after changes")
+                else:
+                    st.info("Click ▶ Run preview to see the processed output.")
 
 # ── Merge & Download ───────────────────────────────────────────────────────────
 
