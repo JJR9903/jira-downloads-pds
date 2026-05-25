@@ -164,7 +164,12 @@ def process_dataframe(df: pd.DataFrame, config: dict) -> pd.DataFrame:
 
 def to_excel_bytes(df: pd.DataFrame) -> bytes:
     buf = BytesIO()
-    with pd.ExcelWriter(buf, engine="openpyxl", datetime_format="YYYY-MM-DD") as writer:
+    df = df.copy()
+    # Convert datetime columns to plain date objects so Excel shows YYYY-MM-DD only
+    for col in df.columns:
+        if pd.api.types.is_datetime64_any_dtype(df[col]):
+            df[col] = df[col].dt.date
+    with pd.ExcelWriter(buf, engine="openpyxl") as writer:
         df.to_excel(writer, index=False, sheet_name="Data")
     return buf.getvalue()
 
