@@ -39,12 +39,23 @@ DATE_COLUMNS = {
     "Resolved",
 }
 
-FILTER_TYPES = {
-    "include_exact":     "Include rows — value is exactly…",
-    "exclude_exact":     "Exclude rows — value is exactly…",
-    "exclude_contains":  "Exclude rows — value contains…",
-    "exclude_startswith":"Exclude rows — value starts with…",
+# ── Chip CSS ───────────────────────────────────────────────────────────────────
+# Makes buttons inside .chip-area look like removable tags.
+
+CHIP_CSS = """
+<style>
+div[data-chip-area] button, .chip-area button {
+    border-radius: 2rem !important;
+    padding: 0 10px !important;
+    font-size: 0.78rem !important;
+    height: 1.9rem !important;
+    background: #1c3f6e !important;
+    border: 1px solid #2d6aa0 !important;
+    color: #90caff !important;
+    min-height: 0 !important;
 }
+</style>
+"""
 
 # ── Core processing helpers ────────────────────────────────────────────────────
 
@@ -65,24 +76,25 @@ def parse_date_column(series: pd.Series) -> pd.Series:
 def apply_filters(df: pd.DataFrame, filters: list) -> pd.DataFrame:
     for f in filters:
         col   = f.get("column", "")
-        ftype = f.get("type", "")
-        vals  = [v.strip() for v in f.get("values", "").splitlines() if v.strip()]
+        mode  = f.get("mode", "include")   # "include" | "exclude"
+        match = f.get("match", "exact")    # "exact" | "contains" | "startswith"
+        vals  = f.get("values", [])
 
         if not col or col not in df.columns or not vals:
             continue
 
         s = df[col].fillna("").astype(str)
 
-        if ftype == "include_exact":
-            df = df[s.isin(vals)]
-        elif ftype == "exclude_exact":
-            df = df[~s.isin(vals)]
-        elif ftype == "exclude_contains":
+        if match == "exact":
+            mask = s.isin(vals)
+        elif match == "contains":
             mask = s.apply(lambda x: any(v.lower() in x.lower() for v in vals))
-            df = df[~mask]
-        elif ftype == "exclude_startswith":
+        elif match == "startswith":
             mask = s.apply(lambda x: any(x.lower().startswith(v.lower()) for v in vals))
-            df = df[~mask]
+        else:
+            continue
+
+        df = df[mask] if mode == "include" else df[~mask]
 
     return df.reset_index(drop=True)
 
@@ -143,7 +155,6 @@ for key, default in [
     if key not in st.session_state:
         st.session_state[key] = default
 
-
 # ── Header ─────────────────────────────────────────────────────────────────────
 
 st.title("📊 Jira CSV Processor")
@@ -185,6 +196,8 @@ for f in uploaded_files:
 
 # ── Per-file configuration panels ─────────────────────────────────────────────
 
+st.markdown(CHIP_CSS, unsafe_allow_html=True)
+
 for f in uploaded_files:
     filename = f.name
     df       = st.session_state.file_data[filename]
@@ -205,10 +218,9 @@ for f in uploaded_files:
                 "For each target schema column select the matching source column. "
                 "Leave blank to write an empty column in the output."
             )
-            rev_map    = {tgt: src for src, tgt in config["column_mapping"].items()}
+            rev_map     = {tgt: src for src, tgt in config["column_mapping"].items()}
             new_mapping = {}
 
-            # Render two columns per row
             pairs = list(zip(FINAL_SCHEMA[::2], FINAL_SCHEMA[1::2]))
             if len(FINAL_SCHEMA) % 2:
                 pairs.append((FINAL_SCHEMA[-1], None))
@@ -234,51 +246,136 @@ for f in uploaded_files:
 
         # ── Filters ───────────────────────────────────────────────────────────
         with tab_filt:
-            st.caption(
-                "Filters are applied **before** column mapping, on the original source columns."
-            )
+            st.caption("Filters run **before** column mapping, on the original source columns.")
+
             if st.button("＋ Add filter", key=f"{filename}__add_filter"):
                 config["filters"].append(
-                    {"column": "", "type": "include_exact", "values": ""}
+                    {"column": "", "mode": "include", "match": "exact", "values": []}
                 )
 
             to_remove = []
             for i, filt in enumerate(config["filters"]):
-                st.markdown(f"**Filter {i + 1}**")
-                c1, c2, c3, c4 = st.columns([2, 3, 3, 0.7])
 
-                with c1:
-                    idx = src_opts.index(filt["column"]) if filt["column"] in src_opts else 0
-                    filt["column"] = st.selectbox(
-                        "Source column",
-                        src_opts,
-                        index=idx,
-                        key=f"{filename}__filt_{i}__col",
-                    )
-                with c2:
-                    ftype_keys = list(FILTER_TYPES.keys())
-                    fidx = ftype_keys.index(filt["type"]) if filt["type"] in ftype_keys else 0
-                    filt["type"] = st.selectbox(
-                        "Filter type",
-                        ftype_keys,
-                        index=fidx,
-                        format_func=lambda k: FILTER_TYPES[k],
-                        key=f"{filename}__filt_{i}__type",
-                    )
-                with c3:
-                    filt["values"] = st.text_area(
-                        "Values (one per line)",
-                        value=filt["values"],
-                        height=100,
-                        key=f"{filename}__filt_{i}__vals",
-                    )
-                with c4:
-                    st.markdown("&nbsp;", unsafe_allow_html=True)
-                    st.markdown("&nbsp;", unsafe_allow_html=True)
-                    if st.button("🗑", key=f"{filename}__filt_{i}__rm", help="Remove"):
-                        to_remove.append(i)
+                with st.container(border=True):
+                    # ── Selector row ──────────────────────────────────────────
+                    c1, c2, c3, c4 = st.columns([2.8, 1.4, 1.8, 0.5])
 
-                st.divider()
+                    with c1:
+                        prev_col = filt.get("column", "")
+                        idx = src_opts.index(prev_col) if prev_col in src_opts else 0
+                        new_col = st.selectbox(
+                            "Source column",
+                            src_opts,
+                            index=idx,
+                            key=f"{filename}__filt_{i}__col",
+                        )
+                        if new_col != prev_col:
+                            filt["values"] = []
+                        filt["column"] = new_col
+
+                    with c2:
+                        modes     = ["include", "exclude"]
+                        mode_lbls = {"include": "Include", "exclude": "Exclude"}
+                        midx = modes.index(filt.get("mode", "include"))
+                        filt["mode"] = st.selectbox(
+                            "Mode",
+                            modes,
+                            index=midx,
+                            format_func=lambda k: mode_lbls[k],
+                            key=f"{filename}__filt_{i}__mode",
+                        )
+
+                    with c3:
+                        match_opts  = ["exact", "contains", "startswith"]
+                        match_lbls  = {
+                            "exact":      "Is (exact match)",
+                            "contains":   "Contains",
+                            "startswith": "Starts with",
+                        }
+                        prev_match = filt.get("match", "exact")
+                        maidx = match_opts.index(prev_match) if prev_match in match_opts else 0
+                        new_match = st.selectbox(
+                            "Match type",
+                            match_opts,
+                            index=maidx,
+                            format_func=lambda k: match_lbls[k],
+                            key=f"{filename}__filt_{i}__match",
+                        )
+                        if new_match != prev_match:
+                            filt["values"] = []
+                        filt["match"] = new_match
+
+                    with c4:
+                        # Align delete button to bottom of row
+                        st.markdown("<br><br>", unsafe_allow_html=True)
+                        if st.button("🗑", key=f"{filename}__filt_{i}__rm", help="Remove filter"):
+                            to_remove.append(i)
+
+                    # ── Values area ───────────────────────────────────────────
+                    col_name = filt.get("column", "")
+
+                    if filt["match"] == "exact":
+                        # Multi-select from the column's actual unique values
+                        if col_name and col_name in df.columns:
+                            unique_vals  = sorted(df[col_name].dropna().astype(str).unique())
+                            valid_default = [v for v in filt.get("values", []) if v in unique_vals]
+                            filt["values"] = st.multiselect(
+                                "Values",
+                                options=unique_vals,
+                                default=valid_default,
+                                placeholder="Select one or more values…",
+                                key=f"{filename}__filt_{i}__multi__{col_name}",
+                            )
+                        else:
+                            st.caption("← Select a source column to see available values.")
+
+                    else:
+                        # Tag / chip input
+                        inp_key = f"{filename}__filt_{i}__chip_input"
+                        if inp_key not in st.session_state:
+                            st.session_state[inp_key] = ""
+
+                        inp_col, btn_col = st.columns([5, 1])
+                        with inp_col:
+                            st.text_input(
+                                "Add value",
+                                label_visibility="collapsed",
+                                placeholder=f"Type a value to match ({filt['match']}) and click ＋",
+                                key=inp_key,
+                            )
+                        with btn_col:
+                            if st.button("＋", key=f"{filename}__filt_{i}__add_chip", use_container_width=True):
+                                new_v = st.session_state.get(inp_key, "").strip()
+                                if new_v and new_v not in filt["values"]:
+                                    filt["values"].append(new_v)
+                                st.session_state[inp_key] = ""
+                                st.rerun()
+
+                        # Render chips
+                        if filt["values"]:
+                            st.markdown("<br>", unsafe_allow_html=True)
+                            vals_to_drop = []
+                            per_row = 5
+                            rows = [
+                                filt["values"][s: s + per_row]
+                                for s in range(0, len(filt["values"]), per_row)
+                            ]
+                            for r_idx, row_vals in enumerate(rows):
+                                chip_cols = st.columns(per_row)
+                                for j, val in enumerate(row_vals):
+                                    global_idx = r_idx * per_row + j
+                                    with chip_cols[j]:
+                                        if st.button(
+                                            f"✕  {val}",
+                                            key=f"{filename}__filt_{i}__chip_{global_idx}",
+                                            use_container_width=True,
+                                        ):
+                                            vals_to_drop.append(global_idx)
+
+                            if vals_to_drop:
+                                for idx in reversed(vals_to_drop):
+                                    filt["values"].pop(idx)
+                                st.rerun()
 
             for i in reversed(to_remove):
                 config["filters"].pop(i)
