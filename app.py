@@ -101,10 +101,15 @@ def apply_filters(df: pd.DataFrame, filters: list) -> pd.DataFrame:
 
 def apply_replacements(df: pd.DataFrame, replacements: list) -> pd.DataFrame:
     for r in replacements:
-        col = r.get("column", "")
-        old = r.get("old", "")
-        new = r.get("new", "")
-        if col and col in df.columns and old != "":
+        col  = r.get("column", "")
+        mode = r.get("mode", "specific")
+        old  = r.get("old", "")
+        new  = r.get("new", "")
+        if not col or col not in df.columns:
+            continue
+        if mode == "overwrite":
+            df[col] = new
+        elif old != "":
             df[col] = df[col].replace(old, new)
     return df
 
@@ -388,37 +393,60 @@ for f in uploaded_files:
                 "Replacements are applied **before** column mapping, on the original source columns."
             )
             if st.button("＋ Add replacement", key=f"{filename}__add_rep"):
-                config["replacements"].append({"column": "", "old": "", "new": ""})
+                config["replacements"].append({"column": "", "mode": "specific", "old": "", "new": ""})
 
             to_remove_rep = []
             for i, rep in enumerate(config["replacements"]):
-                r1, r2, r3, r4 = st.columns([2, 2.5, 2.5, 0.7])
+                with st.container(border=True):
+                    r1, r2, r3 = st.columns([2.5, 2.5, 0.5])
 
-                with r1:
-                    idx = src_opts.index(rep["column"]) if rep["column"] in src_opts else 0
-                    rep["column"] = st.selectbox(
-                        "Source column",
-                        src_opts,
-                        index=idx,
-                        key=f"{filename}__rep_{i}__col",
-                    )
-                with r2:
-                    rep["old"] = st.text_input(
-                        "Replace this value",
-                        value=rep["old"],
-                        key=f"{filename}__rep_{i}__old",
-                    )
-                with r3:
-                    rep["new"] = st.text_input(
-                        "With this value",
-                        value=rep["new"],
-                        key=f"{filename}__rep_{i}__new",
-                    )
-                with r4:
-                    st.markdown("&nbsp;", unsafe_allow_html=True)
-                    st.markdown("&nbsp;", unsafe_allow_html=True)
-                    if st.button("🗑", key=f"{filename}__rep_{i}__rm", help="Remove"):
-                        to_remove_rep.append(i)
+                    with r1:
+                        idx = src_opts.index(rep["column"]) if rep["column"] in src_opts else 0
+                        rep["column"] = st.selectbox(
+                            "Source column",
+                            src_opts,
+                            index=idx,
+                            key=f"{filename}__rep_{i}__col",
+                        )
+                    with r2:
+                        modes     = ["specific", "overwrite"]
+                        mode_lbls = {
+                            "specific":  "Replace a specific value",
+                            "overwrite": "Set entire column to a fixed value",
+                        }
+                        midx = modes.index(rep.get("mode", "specific"))
+                        rep["mode"] = st.selectbox(
+                            "Replacement type",
+                            modes,
+                            index=midx,
+                            format_func=lambda k: mode_lbls[k],
+                            key=f"{filename}__rep_{i}__mode",
+                        )
+                    with r3:
+                        st.markdown("<br><br>", unsafe_allow_html=True)
+                        if st.button("🗑", key=f"{filename}__rep_{i}__rm", help="Remove"):
+                            to_remove_rep.append(i)
+
+                    if rep["mode"] == "specific":
+                        v1, v2 = st.columns(2)
+                        with v1:
+                            rep["old"] = st.text_input(
+                                "Replace this value",
+                                value=rep.get("old", ""),
+                                key=f"{filename}__rep_{i}__old",
+                            )
+                        with v2:
+                            rep["new"] = st.text_input(
+                                "With this value",
+                                value=rep.get("new", ""),
+                                key=f"{filename}__rep_{i}__new",
+                            )
+                    else:
+                        rep["new"] = st.text_input(
+                            "Fixed value to set",
+                            value=rep.get("new", ""),
+                            key=f"{filename}__rep_{i}__new_ow",
+                        )
 
             for i in reversed(to_remove_rep):
                 config["replacements"].pop(i)
