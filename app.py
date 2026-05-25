@@ -364,8 +364,18 @@ for f in uploaded_files:
                     else:
                         # Tag / chip input
                         inp_key = f"{filename}__filt_{i}__chip_input"
-                        if inp_key not in st.session_state:
-                            st.session_state[inp_key] = ""
+
+                        # on_click callback runs before the next render, so it is
+                        # safe to clear the widget key from there (avoids the
+                        # StreamlitAPIException from writing a widget key mid-run).
+                        def _add_chip(
+                            _key=inp_key,
+                            _values=filt["values"],
+                        ):
+                            val = st.session_state.get(_key, "").strip()
+                            if val and val not in _values:
+                                _values.append(val)
+                            st.session_state[_key] = ""
 
                         inp_col, btn_col = st.columns([5, 1])
                         with inp_col:
@@ -376,17 +386,16 @@ for f in uploaded_files:
                                 key=inp_key,
                             )
                         with btn_col:
-                            if st.button("＋", key=f"{filename}__filt_{i}__add_chip", use_container_width=True):
-                                new_v = st.session_state.get(inp_key, "").strip()
-                                if new_v and new_v not in filt["values"]:
-                                    filt["values"].append(new_v)
-                                st.session_state[inp_key] = ""
-                                st.rerun()
+                            st.button(
+                                "＋",
+                                key=f"{filename}__filt_{i}__add_chip",
+                                on_click=_add_chip,
+                                use_container_width=True,
+                            )
 
-                        # Render chips
+                        # Render chips — button click triggers rerun automatically
                         if filt["values"]:
                             st.markdown("<br>", unsafe_allow_html=True)
-                            vals_to_drop = []
                             per_row = 5
                             rows = [
                                 filt["values"][s: s + per_row]
@@ -402,11 +411,7 @@ for f in uploaded_files:
                                             key=f"{filename}__filt_{i}__chip_{global_idx}",
                                             use_container_width=True,
                                         ):
-                                            vals_to_drop.append(global_idx)
-
-                            if vals_to_drop:
-                                for idx in reversed(vals_to_drop):
-                                    filt["values"].pop(idx)
+                                            filt["values"].pop(global_idx)
                                 st.rerun()
 
             for i in reversed(to_remove):
