@@ -188,8 +188,10 @@ for f in uploaded_files:
     if f.name not in st.session_state.file_data:
         df = read_csv_safe(f)
         st.session_state.file_data[f.name] = df
+        schema_set   = set(FINAL_SCHEMA)
+        auto_mapping = {col: col for col in df.columns if col in schema_set}
         st.session_state.file_configs[f.name] = {
-            "column_mapping": {},
+            "column_mapping": auto_mapping,
             "filters":        [],
             "replacements":   [],
         }
