@@ -1,8 +1,9 @@
 import streamlit as st
 import pandas as pd
 from io import BytesIO
+import datetime
 
-st.set_page_config(page_title="Procesador Jira CSV", page_icon="📊", layout="wide")
+st.set_page_config(page_title=f"PdS Procesador de descargas Jira CSV", page_icon="📊", layout="wide")
 
 # ── Schema & constants ─────────────────────────────────────────────────────────
 
@@ -179,7 +180,7 @@ for key, default in [
 
 # ── Encabezado ─────────────────────────────────────────────────────────────────
 
-st.title("📊 Procesador Jira CSV")
+st.title(f"📊 PdS Procesador de descargas Jira CSV")
 st.markdown(
     "Sube exportaciones CSV de Jira → configura **mapeo de columnas**, **filtros** y "
     "**reemplazos de valores** por archivo → descarga un **XLSX** combinado con el esquema estándar."
@@ -538,9 +539,9 @@ with right:
     if st.session_state.xlsx_bytes:
         rows, cols = st.session_state.final_shape
         st.download_button(
-            label="⬇️ Descargar XLSX combinado",
+            label="⬇️ Descargar Excel combinado",
             data=st.session_state.xlsx_bytes,
-            file_name="jira_combinado.xlsx",
+            file_name=f"jira_combinado - {datetime.date.today()}.xlsx", 
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             help=f"{rows:,} filas × {cols} columnas",
             use_container_width=True,
