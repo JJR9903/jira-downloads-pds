@@ -89,7 +89,8 @@ def parse_date_column(series: pd.Series) -> pd.Series:
     if parsed.dt.tz is not None:
         parsed = parsed.dt.tz_convert("UTC").dt.tz_localize(None)
 
-    return parsed
+    # Drop the time component — keep date only
+    return parsed.dt.normalize()
 
 
 def apply_filters(df: pd.DataFrame, filters: list) -> pd.DataFrame:
