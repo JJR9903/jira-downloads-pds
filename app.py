@@ -68,9 +68,28 @@ def read_csv_safe(file) -> pd.DataFrame:
 
 
 def parse_date_column(series: pd.Series) -> pd.Series:
-    """Parse heterogeneous date strings → tz-naive datetime."""
-    parsed = pd.to_datetime(series, errors="coerce", utc=True)
-    return parsed.dt.tz_localize(None)
+    """Parse Jira date strings → tz-naive datetime.
+
+    Handles (in the same column):
+      - "16/Apr/26 4:02 PM"   DD/MMM/YY h:mm AM/PM
+      - "01/Jan/26 12:00 AM"  DD/MMM/YY 12:00 AM/PM
+      - "16/Apr/26"           DD/MMM/YY  (date only)
+      - ISO-8601 variants, timezone-aware strings, empty / NaN cells
+    """
+    # format="mixed" (pandas ≥ 2.0) calls dateutil per element so each row's
+    # format is inferred independently.  dayfirst=True is the tiebreaker for
+    # numeric-only positions; abbreviated months (Apr/Jan) make it unambiguous.
+    try:
+        parsed = pd.to_datetime(series, format="mixed", dayfirst=True, errors="coerce")
+    except TypeError:
+        # pandas < 2.0 fallback
+        parsed = pd.to_datetime(series, infer_datetime_format=True, dayfirst=True, errors="coerce")
+
+    # Strip timezone so Excel writing works cleanly
+    if parsed.dt.tz is not None:
+        parsed = parsed.dt.tz_convert("UTC").dt.tz_localize(None)
+
+    return parsed
 
 
 def apply_filters(df: pd.DataFrame, filters: list) -> pd.DataFrame:
