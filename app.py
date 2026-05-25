@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 from io import BytesIO
 
-st.set_page_config(page_title="Jira CSV Processor", page_icon="📊", layout="wide")
+st.set_page_config(page_title="Procesador Jira CSV", page_icon="📊", layout="wide")
 
 # ── Schema & constants ─────────────────────────────────────────────────────────
 
@@ -40,7 +40,6 @@ DATE_COLUMNS = {
 }
 
 # ── Chip CSS ───────────────────────────────────────────────────────────────────
-# Makes buttons inside .chip-area look like removable tags.
 
 CHIP_CSS = """
 <style>
@@ -76,28 +75,22 @@ def parse_date_column(series: pd.Series) -> pd.Series:
       - "16/Apr/26"           DD/MMM/YY  (date only)
       - ISO-8601 variants, timezone-aware strings, empty / NaN cells
     """
-    # format="mixed" (pandas ≥ 2.0) calls dateutil per element so each row's
-    # format is inferred independently.  dayfirst=True is the tiebreaker for
-    # numeric-only positions; abbreviated months (Apr/Jan) make it unambiguous.
     try:
         parsed = pd.to_datetime(series, format="mixed", dayfirst=True, errors="coerce")
     except TypeError:
-        # pandas < 2.0 fallback
         parsed = pd.to_datetime(series, infer_datetime_format=True, dayfirst=True, errors="coerce")
 
-    # Strip timezone so Excel writing works cleanly
     if parsed.dt.tz is not None:
         parsed = parsed.dt.tz_convert("UTC").dt.tz_localize(None)
 
-    # Drop the time component — keep date only
     return parsed.dt.normalize()
 
 
 def apply_filters(df: pd.DataFrame, filters: list) -> pd.DataFrame:
     for f in filters:
         col   = f.get("column", "")
-        mode  = f.get("mode", "include")   # "include" | "exclude"
-        match = f.get("match", "exact")    # "exact" | "contains" | "startswith"
+        mode  = f.get("mode", "include")
+        match = f.get("match", "exact")
         vals  = f.get("values", [])
 
         if not col or col not in df.columns or not vals:
@@ -165,12 +158,11 @@ def process_dataframe(df: pd.DataFrame, config: dict) -> pd.DataFrame:
 def to_excel_bytes(df: pd.DataFrame) -> bytes:
     buf = BytesIO()
     df = df.copy()
-    # Convert datetime columns to plain date objects so Excel shows YYYY-MM-DD only
     for col in df.columns:
         if pd.api.types.is_datetime64_any_dtype(df[col]):
             df[col] = df[col].dt.date
     with pd.ExcelWriter(buf, engine="openpyxl") as writer:
-        df.to_excel(writer, index=False, sheet_name="Data")
+        df.to_excel(writer, index=False, sheet_name="Datos")
     return buf.getvalue()
 
 
@@ -185,28 +177,28 @@ for key, default in [
     if key not in st.session_state:
         st.session_state[key] = default
 
-# ── Header ─────────────────────────────────────────────────────────────────────
+# ── Encabezado ─────────────────────────────────────────────────────────────────
 
-st.title("📊 Jira CSV Processor")
+st.title("📊 Procesador Jira CSV")
 st.markdown(
-    "Upload Jira CSV exports → configure **column mappings**, **filters**, and "
-    "**value replacements** per file → download a merged **XLSX** in the standard schema."
+    "Sube exportaciones CSV de Jira → configura **mapeo de columnas**, **filtros** y "
+    "**reemplazos de valores** por archivo → descarga un **XLSX** combinado con el esquema estándar."
 )
 
-# ── File upload ────────────────────────────────────────────────────────────────
+# ── Carga de archivos ──────────────────────────────────────────────────────────
 
 uploaded_files = st.file_uploader(
-    "Upload one or more CSV files",
+    "Sube uno o más archivos CSV",
     type=["csv"],
     accept_multiple_files=True,
     key="uploader",
 )
 
 if not uploaded_files:
-    st.info("Upload at least one CSV file to get started.")
+    st.info("Sube al menos un archivo CSV para comenzar.")
     st.stop()
 
-# Sync session state with current uploads
+# Sincronizar session state con los archivos cargados
 current_names = {f.name for f in uploaded_files}
 
 for name in list(st.session_state.file_data.keys()):
@@ -226,7 +218,7 @@ for f in uploaded_files:
             "replacements":   [],
         }
 
-# ── Per-file configuration panels ─────────────────────────────────────────────
+# ── Paneles de configuración por archivo ──────────────────────────────────────
 
 st.markdown(CHIP_CSS, unsafe_allow_html=True)
 
@@ -237,18 +229,18 @@ for f in uploaded_files:
     src_opts = [""] + list(df.columns)
 
     with st.expander(
-        f"**{filename}** · {len(df):,} rows × {len(df.columns)} cols",
+        f"**{filename}** · {len(df):,} filas × {len(df.columns)} cols",
         expanded=True,
     ):
         tab_map, tab_filt, tab_rep, tab_prev = st.tabs(
-            ["🗂 Column Mapping", "🔍 Filters", "✏️ Value Replacements", "👁 Preview"]
+            ["🗂 Mapeo de Columnas", "🔍 Filtros", "✏️ Reemplazos de Valores", "👁 Vista Previa"]
         )
 
-        # ── Column Mapping ─────────────────────────────────────────────────────
+        # ── Mapeo de Columnas ──────────────────────────────────────────────────
         with tab_map:
             st.caption(
-                "For each target schema column select the matching source column. "
-                "Leave blank to write an empty column in the output."
+                "Para cada columna del esquema destino, selecciona la columna origen correspondiente. "
+                "Déjala en blanco para escribir una columna vacía en el resultado."
             )
             rev_map     = {tgt: src for src, tgt in config["column_mapping"].items()}
             new_mapping = {}
@@ -276,11 +268,11 @@ for f in uploaded_files:
 
             config["column_mapping"] = new_mapping
 
-        # ── Filters ───────────────────────────────────────────────────────────
+        # ── Filtros ───────────────────────────────────────────────────────────
         with tab_filt:
-            st.caption("Filters run **before** column mapping, on the original source columns.")
+            st.caption("Los filtros se aplican **antes** del mapeo de columnas, sobre las columnas originales.")
 
-            if st.button("＋ Add filter", key=f"{filename}__add_filter"):
+            if st.button("＋ Agregar filtro", key=f"{filename}__add_filter"):
                 config["filters"].append(
                     {"column": "", "mode": "include", "match": "exact", "values": []}
                 )
@@ -289,14 +281,13 @@ for f in uploaded_files:
             for i, filt in enumerate(config["filters"]):
 
                 with st.container(border=True):
-                    # ── Selector row ──────────────────────────────────────────
                     c1, c2, c3, c4 = st.columns([2.8, 1.4, 1.8, 0.5])
 
                     with c1:
                         prev_col = filt.get("column", "")
                         idx = src_opts.index(prev_col) if prev_col in src_opts else 0
                         new_col = st.selectbox(
-                            "Source column",
+                            "Columna origen",
                             src_opts,
                             index=idx,
                             key=f"{filename}__filt_{i}__col",
@@ -307,10 +298,10 @@ for f in uploaded_files:
 
                     with c2:
                         modes     = ["include", "exclude"]
-                        mode_lbls = {"include": "Include", "exclude": "Exclude"}
+                        mode_lbls = {"include": "Incluir", "exclude": "Excluir"}
                         midx = modes.index(filt.get("mode", "include"))
                         filt["mode"] = st.selectbox(
-                            "Mode",
+                            "Modo",
                             modes,
                             index=midx,
                             format_func=lambda k: mode_lbls[k],
@@ -318,16 +309,16 @@ for f in uploaded_files:
                         )
 
                     with c3:
-                        match_opts  = ["exact", "contains", "startswith"]
-                        match_lbls  = {
-                            "exact":      "Is (exact match)",
-                            "contains":   "Contains",
-                            "startswith": "Starts with",
+                        match_opts = ["exact", "contains", "startswith"]
+                        match_lbls = {
+                            "exact":      "Es (exacto)",
+                            "contains":   "Contiene",
+                            "startswith": "Comienza con",
                         }
                         prev_match = filt.get("match", "exact")
                         maidx = match_opts.index(prev_match) if prev_match in match_opts else 0
                         new_match = st.selectbox(
-                            "Match type",
+                            "Tipo de coincidencia",
                             match_opts,
                             index=maidx,
                             format_func=lambda k: match_lbls[k],
@@ -338,38 +329,32 @@ for f in uploaded_files:
                         filt["match"] = new_match
 
                     with c4:
-                        # Align delete button to bottom of row
                         st.markdown("<br><br>", unsafe_allow_html=True)
-                        if st.button("🗑", key=f"{filename}__filt_{i}__rm", help="Remove filter"):
+                        if st.button("🗑", key=f"{filename}__filt_{i}__rm", help="Eliminar filtro"):
                             to_remove.append(i)
 
-                    # ── Values area ───────────────────────────────────────────
                     col_name = filt.get("column", "")
 
                     if filt["match"] == "exact":
-                        # Multi-select from the column's actual unique values
                         if col_name and col_name in df.columns:
-                            unique_vals  = sorted(df[col_name].dropna().astype(str).unique())
+                            unique_vals   = sorted(df[col_name].dropna().astype(str).unique())
                             valid_default = [v for v in filt.get("values", []) if v in unique_vals]
                             filt["values"] = st.multiselect(
-                                "Values",
+                                "Valores",
                                 options=unique_vals,
                                 default=valid_default,
-                                placeholder="Select one or more values…",
+                                placeholder="Selecciona uno o más valores…",
                                 key=f"{filename}__filt_{i}__multi__{col_name}",
                             )
                             if not filt["values"]:
-                                st.caption("⚠️ No values selected — filter inactive.")
+                                st.caption("⚠️ Sin valores seleccionados — filtro inactivo.")
                         else:
-                            st.caption("← Select a source column to see available values.")
+                            st.caption("← Selecciona una columna origen para ver los valores disponibles.")
 
                     else:
-                        # Tag / chip input
                         inp_key = f"{filename}__filt_{i}__chip_input"
+                        match_es = {"contains": "contiene", "startswith": "comienza con"}
 
-                        # on_click callback runs before the next render, so it is
-                        # safe to clear the widget key from there (avoids the
-                        # StreamlitAPIException from writing a widget key mid-run).
                         def _add_chip(
                             _key=inp_key,
                             _values=filt["values"],
@@ -382,9 +367,9 @@ for f in uploaded_files:
                         inp_col, btn_col = st.columns([5, 1])
                         with inp_col:
                             st.text_input(
-                                "Add value",
+                                "Agregar valor",
                                 label_visibility="collapsed",
-                                placeholder=f"Type a value to match ({filt['match']}) and click ＋",
+                                placeholder=f"Escribe un valor ({match_es.get(filt['match'], filt['match'])}) y haz clic en ＋",
                                 key=inp_key,
                             )
                         with btn_col:
@@ -395,7 +380,6 @@ for f in uploaded_files:
                                 use_container_width=True,
                             )
 
-                        # Render chips — button click triggers rerun automatically
                         if filt["values"]:
                             st.markdown("<br>", unsafe_allow_html=True)
                             per_row = 5
@@ -415,17 +399,17 @@ for f in uploaded_files:
                                         ):
                                             filt["values"].pop(global_idx)
                         else:
-                            st.caption("⚠️ No values added — filter inactive.")
+                            st.caption("⚠️ Sin valores agregados — filtro inactivo.")
 
             for i in reversed(to_remove):
                 config["filters"].pop(i)
 
-        # ── Value Replacements ────────────────────────────────────────────────
+        # ── Reemplazos de Valores ─────────────────────────────────────────────
         with tab_rep:
             st.caption(
-                "Replacements are applied **before** column mapping, on the original source columns."
+                "Los reemplazos se aplican **antes** del mapeo de columnas, sobre las columnas originales."
             )
-            if st.button("＋ Add replacement", key=f"{filename}__add_rep"):
+            if st.button("＋ Agregar reemplazo", key=f"{filename}__add_rep"):
                 config["replacements"].append({"column": "", "mode": "specific", "old": "", "new": ""})
 
             to_remove_rep = []
@@ -436,7 +420,7 @@ for f in uploaded_files:
                     with r1:
                         idx = src_opts.index(rep["column"]) if rep["column"] in src_opts else 0
                         rep["column"] = st.selectbox(
-                            "Source column",
+                            "Columna origen",
                             src_opts,
                             index=idx,
                             key=f"{filename}__rep_{i}__col",
@@ -444,12 +428,12 @@ for f in uploaded_files:
                     with r2:
                         modes     = ["specific", "overwrite"]
                         mode_lbls = {
-                            "specific":  "Replace a specific value",
-                            "overwrite": "Set entire column to a fixed value",
+                            "specific":  "Reemplazar un valor específico",
+                            "overwrite": "Establecer toda la columna a un valor fijo",
                         }
                         midx = modes.index(rep.get("mode", "specific"))
                         rep["mode"] = st.selectbox(
-                            "Replacement type",
+                            "Tipo de reemplazo",
                             modes,
                             index=midx,
                             format_func=lambda k: mode_lbls[k],
@@ -457,26 +441,26 @@ for f in uploaded_files:
                         )
                     with r3:
                         st.markdown("<br><br>", unsafe_allow_html=True)
-                        if st.button("🗑", key=f"{filename}__rep_{i}__rm", help="Remove"):
+                        if st.button("🗑", key=f"{filename}__rep_{i}__rm", help="Eliminar"):
                             to_remove_rep.append(i)
 
                     if rep["mode"] == "specific":
                         v1, v2 = st.columns(2)
                         with v1:
                             rep["old"] = st.text_input(
-                                "Replace this value",
+                                "Reemplazar este valor",
                                 value=rep.get("old", ""),
                                 key=f"{filename}__rep_{i}__old",
                             )
                         with v2:
                             rep["new"] = st.text_input(
-                                "With this value",
+                                "Con este valor",
                                 value=rep.get("new", ""),
                                 key=f"{filename}__rep_{i}__new",
                             )
                     else:
                         rep["new"] = st.text_input(
-                            "Fixed value to set",
+                            "Valor fijo a establecer",
                             value=rep.get("new", ""),
                             key=f"{filename}__rep_{i}__new_ow",
                         )
@@ -484,9 +468,9 @@ for f in uploaded_files:
             for i in reversed(to_remove_rep):
                 config["replacements"].pop(i)
 
-        # ── Preview ───────────────────────────────────────────────────────────
+        # ── Vista Previa ──────────────────────────────────────────────────────
         with tab_prev:
-            sub1, sub2 = st.tabs(["Raw data (first 10 rows)", "Processed data (first 50 rows)"])
+            sub1, sub2 = st.tabs(["Datos originales (primeras 10 filas)", "Datos procesados (primeras 50 filas)"])
 
             with sub1:
                 st.dataframe(df.head(10), use_container_width=True)
@@ -495,7 +479,7 @@ for f in uploaded_files:
                 prev_key = f"{filename}__preview_result"
                 prev_err = f"{filename}__preview_error"
 
-                if st.button("▶ Run preview", key=f"{filename}__preview_btn"):
+                if st.button("▶ Ver vista previa", key=f"{filename}__preview_btn"):
                     try:
                         out = process_dataframe(df, config)
                         st.session_state[prev_key] = out
@@ -505,25 +489,25 @@ for f in uploaded_files:
                         st.session_state[prev_err] = str(e)
 
                 if st.session_state.get(prev_err):
-                    st.error(f"Processing error: {st.session_state[prev_err]}")
+                    st.error(f"Error de procesamiento: {st.session_state[prev_err]}")
                 elif prev_key in st.session_state and st.session_state[prev_key] is not None:
                     out = st.session_state[prev_key]
                     st.dataframe(out.head(50), use_container_width=True)
-                    st.caption(f"{len(out):,} rows · {len(out.columns)} cols — click ▶ to refresh after changes")
+                    st.caption(f"{len(out):,} filas · {len(out.columns)} cols — haz clic en ▶ para actualizar tras los cambios")
                 else:
-                    st.info("Click ▶ Run preview to see the processed output.")
+                    st.info("Haz clic en ▶ Ver vista previa para ver el resultado procesado.")
 
-# ── Merge & Download ───────────────────────────────────────────────────────────
+# ── Combinar y Descargar ───────────────────────────────────────────────────────
 
 st.divider()
-st.subheader("Merge & Download")
+st.subheader("Combinar y Descargar")
 
 left, right = st.columns(2)
 
 with left:
-    if st.button("⚙️ Process & Merge all files", type="primary", use_container_width=True):
+    if st.button("⚙️ Procesar y combinar todos los archivos", type="primary", use_container_width=True):
         all_dfs, errors = [], []
-        bar = st.progress(0, text="Processing…")
+        bar = st.progress(0, text="Procesando…")
 
         for i, f in enumerate(uploaded_files):
             fname  = f.name
@@ -534,7 +518,7 @@ with left:
                 all_dfs.append(processed)
             except Exception as e:
                 errors.append(f"**{fname}**: {e}")
-            bar.progress((i + 1) / len(uploaded_files), text=f"Processed {fname}")
+            bar.progress((i + 1) / len(uploaded_files), text=f"Procesado {fname}")
 
         bar.empty()
 
@@ -546,20 +530,20 @@ with left:
             st.session_state.xlsx_bytes = to_excel_bytes(final_df)
             st.session_state.final_shape = final_df.shape
             st.success(
-                f"✅ Merged **{len(all_dfs)}** file(s) → "
-                f"**{final_df.shape[0]:,} rows** × {final_df.shape[1]} columns"
+                f"✅ Combinados **{len(all_dfs)}** archivo(s) → "
+                f"**{final_df.shape[0]:,} filas** × {final_df.shape[1]} columnas"
             )
 
 with right:
     if st.session_state.xlsx_bytes:
         rows, cols = st.session_state.final_shape
         st.download_button(
-            label="⬇️ Download merged XLSX",
+            label="⬇️ Descargar XLSX combinado",
             data=st.session_state.xlsx_bytes,
-            file_name="jira_merged.xlsx",
+            file_name="jira_combinado.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            help=f"{rows:,} rows × {cols} columns",
+            help=f"{rows:,} filas × {cols} columnas",
             use_container_width=True,
         )
     else:
-        st.info("Click **Process & Merge** first, then the download button will appear here.")
+        st.info("Haz clic en **Procesar y combinar** primero; luego aparecerá el botón de descarga.")
