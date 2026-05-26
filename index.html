@@ -1,0 +1,1303 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Procesador Jira CSV</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
+<script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
+<style>
+  :root {
+    --bg: #0f1117;
+    --surface: #1a1d26;
+    --surface2: #252836;
+    --border: #2e3147;
+    --text: #e8e8f0;
+    --text-muted: #8b8fa8;
+    --primary: #4f8ef7;
+    --danger: #e05c5c;
+    --success: #4caf7d;
+    --warning: #e6a817;
+    --chip-bg: #1c3f6e;
+    --chip-border: #2d6aa0;
+    --chip-text: #90caff;
+  }
+
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    font-size: 14px;
+    line-height: 1.5;
+    min-height: 100vh;
+  }
+
+  .app-container {
+    max-width: 1200px;
+    margin: 0 auto;
+    padding: 24px 20px 120px;
+  }
+
+  h1 {
+    font-size: 1.8rem;
+    font-weight: 700;
+    margin-bottom: 6px;
+    color: var(--text);
+  }
+
+  .subtitle {
+    color: var(--text-muted);
+    margin-bottom: 28px;
+    font-size: 0.92rem;
+  }
+
+  /* Upload zone */
+  .upload-zone {
+    border: 2px dashed var(--border);
+    border-radius: 10px;
+    padding: 36px 20px;
+    text-align: center;
+    cursor: pointer;
+    transition: border-color 0.2s, background 0.2s;
+    background: var(--surface);
+    margin-bottom: 24px;
+    position: relative;
+  }
+  .upload-zone:hover, .upload-zone.drag-over {
+    border-color: var(--primary);
+    background: #1a2540;
+  }
+  .upload-zone input[type=file] {
+    position: absolute;
+    inset: 0;
+    opacity: 0;
+    cursor: pointer;
+    width: 100%;
+    height: 100%;
+  }
+  .upload-icon { font-size: 2.2rem; margin-bottom: 8px; }
+  .upload-label { font-size: 1rem; color: var(--text); font-weight: 500; }
+  .upload-hint { font-size: 0.82rem; color: var(--text-muted); margin-top: 4px; }
+
+  /* File panels */
+  .file-panel {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    margin-bottom: 16px;
+    overflow: hidden;
+  }
+
+  .panel-header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 14px 18px;
+    cursor: pointer;
+    user-select: none;
+    background: var(--surface2);
+    transition: background 0.15s;
+  }
+  .panel-header:hover { background: #2d3145; }
+
+  .panel-chevron {
+    font-size: 0.75rem;
+    color: var(--text-muted);
+    transition: transform 0.2s;
+    flex-shrink: 0;
+  }
+  .panel-header.open .panel-chevron { transform: rotate(90deg); }
+
+  .panel-title { font-weight: 600; flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .panel-meta { font-size: 0.8rem; color: var(--text-muted); flex-shrink: 0; }
+  .panel-remove {
+    background: none;
+    border: none;
+    color: var(--danger);
+    cursor: pointer;
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-size: 1rem;
+    flex-shrink: 0;
+    opacity: 0.7;
+    transition: opacity 0.15s;
+  }
+  .panel-remove:hover { opacity: 1; }
+
+  .panel-body { display: none; }
+  .panel-body.open { display: block; }
+
+  /* Tabs */
+  .tab-bar {
+    display: flex;
+    border-bottom: 1px solid var(--border);
+    background: var(--surface2);
+    padding: 0 18px;
+  }
+  .tab-btn {
+    background: none;
+    border: none;
+    border-bottom: 2px solid transparent;
+    color: var(--text-muted);
+    cursor: pointer;
+    padding: 10px 14px;
+    font-size: 0.85rem;
+    font-weight: 500;
+    transition: color 0.15s, border-color 0.15s;
+    white-space: nowrap;
+  }
+  .tab-btn:hover { color: var(--text); }
+  .tab-btn.active { color: var(--primary); border-bottom-color: var(--primary); }
+
+  .tab-content { display: none; padding: 20px 18px; }
+  .tab-content.active { display: block; }
+
+  /* Column map grid */
+  .col-map-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px 20px;
+  }
+  .col-map-item { display: flex; flex-direction: column; gap: 4px; }
+  .col-map-label { font-size: 0.78rem; color: var(--text-muted); font-weight: 500; }
+
+  /* Form elements */
+  select, input[type=text] {
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    color: var(--text);
+    border-radius: 6px;
+    padding: 7px 10px;
+    font-size: 0.85rem;
+    width: 100%;
+    outline: none;
+    transition: border-color 0.15s;
+    -webkit-appearance: none;
+  }
+  select:focus, input[type=text]:focus {
+    border-color: var(--primary);
+  }
+  select {
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='%238b8fa8'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 10px center;
+    padding-right: 28px;
+    cursor: pointer;
+  }
+
+  /* Buttons */
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 8px 14px;
+    border-radius: 6px;
+    border: none;
+    cursor: pointer;
+    font-size: 0.85rem;
+    font-weight: 500;
+    transition: opacity 0.15s, background 0.15s;
+  }
+  .btn:hover { opacity: 0.88; }
+  .btn:active { opacity: 0.75; }
+
+  .btn-primary { background: var(--primary); color: #fff; }
+  .btn-secondary { background: var(--surface2); color: var(--text); border: 1px solid var(--border); }
+  .btn-danger-sm {
+    background: none;
+    border: none;
+    color: var(--danger);
+    cursor: pointer;
+    padding: 4px 6px;
+    border-radius: 4px;
+    font-size: 1rem;
+    opacity: 0.7;
+    transition: opacity 0.15s;
+    flex-shrink: 0;
+  }
+  .btn-danger-sm:hover { opacity: 1; }
+
+  /* Filter / replacement boxes */
+  .filter-box, .replacement-box {
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 14px;
+    margin-bottom: 12px;
+    background: var(--surface2);
+  }
+
+  .filter-row, .replacement-row {
+    display: flex;
+    gap: 10px;
+    align-items: flex-end;
+    flex-wrap: wrap;
+    margin-bottom: 12px;
+  }
+
+  .filter-row .form-group, .replacement-row .form-group { flex: 1; min-width: 120px; }
+  .form-group { display: flex; flex-direction: column; gap: 4px; }
+  .form-label { font-size: 0.75rem; color: var(--text-muted); }
+
+  /* Checkbox list */
+  .checkbox-search {
+    margin-bottom: 6px;
+  }
+  .checkbox-list {
+    max-height: 140px;
+    overflow-y: auto;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 6px 8px;
+    background: var(--surface);
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+  }
+  .checkbox-list::-webkit-scrollbar { width: 6px; }
+  .checkbox-list::-webkit-scrollbar-track { background: var(--surface); }
+  .checkbox-list::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+  .checkbox-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 3px 4px;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: background 0.1s;
+  }
+  .checkbox-item:hover { background: var(--surface2); }
+  .checkbox-item input[type=checkbox] {
+    width: 14px;
+    height: 14px;
+    cursor: pointer;
+    accent-color: var(--primary);
+    flex-shrink: 0;
+  }
+  .checkbox-item label {
+    cursor: pointer;
+    font-size: 0.82rem;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 300px;
+  }
+
+  /* Chips */
+  .chip-input-row {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 10px;
+  }
+  .chip-input-row input { flex: 1; }
+  .btn-add-chip {
+    background: var(--primary);
+    border: none;
+    color: #fff;
+    border-radius: 6px;
+    padding: 7px 12px;
+    cursor: pointer;
+    font-size: 1rem;
+    line-height: 1;
+    flex-shrink: 0;
+    transition: opacity 0.15s;
+  }
+  .btn-add-chip:hover { opacity: 0.85; }
+
+  .chip-area {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-top: 2px;
+  }
+  .chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    background: var(--chip-bg);
+    border: 1px solid var(--chip-border);
+    color: var(--chip-text);
+    border-radius: 100px;
+    padding: 3px 10px 3px 10px;
+    font-size: 0.78rem;
+    line-height: 1.4;
+  }
+  .chip-remove {
+    background: none;
+    border: none;
+    color: var(--chip-text);
+    cursor: pointer;
+    font-size: 0.7rem;
+    padding: 0 0 0 2px;
+    line-height: 1;
+    opacity: 0.75;
+    transition: opacity 0.15s;
+  }
+  .chip-remove:hover { opacity: 1; }
+
+  /* Replacement value inputs */
+  .rep-values-row {
+    display: flex;
+    gap: 12px;
+    flex-wrap: wrap;
+  }
+  .rep-values-row .form-group { flex: 1; min-width: 160px; }
+
+  /* Tables */
+  .table-wrap {
+    overflow-x: auto;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    max-height: 400px;
+    overflow-y: auto;
+  }
+  .table-wrap::-webkit-scrollbar { width: 6px; height: 6px; }
+  .table-wrap::-webkit-scrollbar-track { background: var(--surface); }
+  .table-wrap::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.78rem;
+    min-width: 600px;
+  }
+  thead {
+    position: sticky;
+    top: 0;
+    z-index: 2;
+    background: var(--surface2);
+  }
+  th {
+    padding: 8px 12px;
+    text-align: left;
+    color: var(--text-muted);
+    font-weight: 600;
+    border-bottom: 1px solid var(--border);
+    white-space: nowrap;
+  }
+  td {
+    padding: 7px 12px;
+    border-bottom: 1px solid #1e2133;
+    white-space: nowrap;
+    max-width: 220px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    color: var(--text);
+  }
+  tbody tr:hover td { background: #1d2033; }
+  tbody tr:last-child td { border-bottom: none; }
+
+  /* Caption / info messages */
+  .caption { font-size: 0.78rem; color: var(--text-muted); margin-top: 6px; }
+  .warn-msg { font-size: 0.8rem; color: var(--warning); margin-top: 6px; display: flex; align-items: center; gap: 5px; }
+  .info-msg { font-size: 0.82rem; color: var(--text-muted); padding: 10px 14px; background: var(--surface2); border-radius: 6px; border: 1px solid var(--border); }
+  .error-msg { font-size: 0.82rem; color: var(--danger); padding: 10px 14px; background: #2a1414; border-radius: 6px; border: 1px solid #5c2020; }
+  .success-msg { font-size: 0.85rem; color: var(--success); padding: 10px 14px; background: #0f2720; border-radius: 6px; border: 1px solid #1e5c3a; }
+
+  /* Combine section */
+  .combine-section {
+    margin-top: 32px;
+    padding-top: 24px;
+    border-top: 1px solid var(--border);
+  }
+  .combine-section h2 { font-size: 1.15rem; margin-bottom: 16px; }
+  .combine-actions {
+    display: flex;
+    gap: 14px;
+    flex-wrap: wrap;
+    align-items: center;
+  }
+  .btn-large {
+    padding: 10px 20px;
+    font-size: 0.92rem;
+  }
+  #combine-status { margin-top: 14px; }
+
+  /* Preview section */
+  .preview-section-title {
+    font-size: 0.88rem;
+    font-weight: 600;
+    color: var(--text-muted);
+    margin-bottom: 8px;
+    margin-top: 16px;
+  }
+  .preview-btn-row { margin-bottom: 14px; }
+
+  /* Divider */
+  hr { border: none; border-top: 1px solid var(--border); margin: 20px 0; }
+
+  /* Add button row */
+  .add-row { margin-bottom: 14px; }
+
+  @media (max-width: 640px) {
+    .col-map-grid { grid-template-columns: 1fr; }
+    .filter-row, .replacement-row { flex-direction: column; }
+    .rep-values-row { flex-direction: column; }
+    .combine-actions { flex-direction: column; align-items: stretch; }
+  }
+</style>
+</head>
+<body>
+<div class="app-container">
+  <h1>📊 Procesador Jira CSV</h1>
+  <p class="subtitle">
+    Sube exportaciones CSV de Jira → configura <strong>mapeo de columnas</strong>, <strong>filtros</strong> y
+    <strong>reemplazos de valores</strong> por archivo → descarga un <strong>XLSX</strong> combinado con el esquema estándar.
+  </p>
+
+  <div class="upload-zone" id="upload-zone">
+    <input type="file" id="file-input" accept=".csv" multiple>
+    <div class="upload-icon">📂</div>
+    <div class="upload-label">Arrastra archivos CSV aquí o haz clic para seleccionar</div>
+    <div class="upload-hint">Puedes subir múltiples archivos CSV. Los archivos ya cargados no se duplicarán.</div>
+  </div>
+
+  <div id="panels-container"></div>
+
+  <div id="combine-section" class="combine-section" style="display:none;">
+    <h2>Combinar y Descargar</h2>
+    <div class="combine-actions">
+      <button class="btn btn-primary btn-large" data-action="combine">⚙️ Procesar y combinar todos los archivos</button>
+      <button class="btn btn-secondary btn-large" id="download-btn" style="display:none;" data-action="download">⬇️ Descargar XLSX combinado</button>
+    </div>
+    <div id="combine-status"></div>
+  </div>
+</div>
+
+<script>
+// ─── Constants ───────────────────────────────────────────────────────────────
+
+const FINAL_SCHEMA = [
+  "Issue Type", "Issue key", "Issue id", "Summary",
+  "Custom field (Project / Work ID)", "Status",
+  "Custom field (Start date)", "Due date",
+  "Custom field (Story Points)", "Assignee", "Assignee Id",
+  "Reporter", "Reporter Id", "Created", "Updated",
+  "Priority", "Resolved", "Parent", "Parent key",
+  "Parent summary", "Custom field (Project Phase)",
+  "Custom field (Execution Status)"
+];
+
+const DATE_COLS = new Set([
+  "Custom field (Start date)", "Due date", "Created", "Updated", "Resolved"
+]);
+
+const MONTH_MAP = {
+  jan:0, feb:1, mar:2, apr:3, may:4, jun:5,
+  jul:6, aug:7, sep:8, oct:9, nov:10, dec:11
+};
+
+// ─── State ───────────────────────────────────────────────────────────────────
+
+let files = []; // array of file state objects
+let combinedBlob = null;
+
+// ─── Date helpers ─────────────────────────────────────────────────────────────
+
+function parseDate(s) {
+  if (!s || !s.trim()) return null;
+  const trimmed = s.trim();
+  // "16/Apr/26 4:02 PM" or "16/Apr/26"
+  const m = trimmed.match(/^(\d{1,2})\/([A-Za-z]{3})\/(\d{2})(?:\s+(\d{1,2}):(\d{2})\s*(AM|PM))?$/i);
+  if (m) {
+    const mo = MONTH_MAP[m[2].toLowerCase()];
+    if (mo !== undefined) {
+      return new Date(2000 + parseInt(m[3], 10), mo, parseInt(m[1], 10));
+    }
+  }
+  const d = new Date(trimmed);
+  return isNaN(d.getTime()) ? null : d;
+}
+
+function fmtDate(d) {
+  if (!d) return '';
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+// ─── HTML escaping ────────────────────────────────────────────────────────────
+
+function esc(s) {
+  if (s == null) return '';
+  return String(s)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+// ─── Processing pipeline ──────────────────────────────────────────────────────
+
+function applyFilters(data, filters) {
+  let rows = data;
+  for (const f of filters) {
+    const { column, mode, match, values } = f;
+    if (!column || !values || values.length === 0) continue;
+    rows = rows.filter(row => {
+      const cell = String(row[column] ?? '');
+      let hit;
+      if (match === 'exact') {
+        hit = values.includes(cell);
+      } else if (match === 'contains') {
+        const cl = cell.toLowerCase();
+        hit = values.some(v => cl.includes(v.toLowerCase()));
+      } else if (match === 'startswith') {
+        const cl = cell.toLowerCase();
+        hit = values.some(v => cl.startsWith(v.toLowerCase()));
+      } else {
+        hit = false;
+      }
+      return mode === 'include' ? hit : !hit;
+    });
+  }
+  return rows;
+}
+
+function applyReplacements(data, replacements) {
+  if (!replacements || replacements.length === 0) return data;
+  return data.map(row => {
+    const r = { ...row };
+    for (const rep of replacements) {
+      const { column, mode, oldVal, newVal } = rep;
+      if (!column || !(column in r)) continue;
+      if (mode === 'overwrite') {
+        r[column] = newVal;
+      } else {
+        if (String(r[column] ?? '') === String(oldVal ?? '')) {
+          r[column] = newVal;
+        }
+      }
+    }
+    return r;
+  });
+}
+
+function processFile(fs) {
+  let data = applyFilters(fs.data, fs.filters);
+  data = applyReplacements(data, fs.replacements);
+
+  const colMap = fs.colMap;
+  const mappedEntries = Object.entries(colMap).filter(([src, tgt]) => src && tgt);
+  if (mappedEntries.length === 0) return [];
+
+  // Build output rows
+  data = data.map(row => {
+    const out = {};
+    for (const [src, tgt] of mappedEntries) {
+      out[tgt] = row[src] ?? '';
+    }
+    return out;
+  });
+
+  // Ensure all schema columns exist
+  data = data.map(row => {
+    const out = {};
+    for (const col of FINAL_SCHEMA) {
+      out[col] = col in row ? row[col] : '';
+    }
+    return out;
+  });
+
+  // Parse/format date columns
+  data = data.map(row => {
+    const out = { ...row };
+    for (const col of DATE_COLS) {
+      const val = out[col];
+      if (val !== undefined) {
+        const d = parseDate(String(val ?? ''));
+        out[col] = fmtDate(d);
+      }
+    }
+    return out;
+  });
+
+  return data;
+}
+
+// ─── Render helpers ───────────────────────────────────────────────────────────
+
+function getUniqueVals(fs, column) {
+  if (!column) return [];
+  const seen = new Set();
+  for (const row of fs.data) {
+    const v = String(row[column] ?? '');
+    seen.add(v);
+  }
+  return [...seen].sort((a, b) => a.localeCompare(b));
+}
+
+function renderColMapTab(fs) {
+  const schemaOpts = fs.columns.map(c => `<option value="${esc(c)}">${esc(c)}</option>`).join('');
+  let html = '<div class="col-map-grid">';
+  for (const tgt of FINAL_SCHEMA) {
+    const curSrc = Object.keys(fs.colMap).find(k => fs.colMap[k] === tgt) || '';
+    html += `
+      <div class="col-map-item">
+        <div class="col-map-label">${esc(tgt)}</div>
+        <select data-action="col-map" data-fid="${esc(fs.id)}" data-tgt="${esc(tgt)}">
+          <option value="">(ninguna)</option>
+          ${fs.columns.map(c => `<option value="${esc(c)}"${c === curSrc ? ' selected' : ''}>${esc(c)}</option>`).join('')}
+        </select>
+      </div>`;
+  }
+  html += '</div>';
+  html += `<p class="caption" style="margin-top:14px;">Selecciona la columna origen para cada columna del esquema destino. Deja en blanco para omitir esa columna.</p>`;
+  return html;
+}
+
+function renderFiltersTab(fs) {
+  let html = `<div class="add-row"><button class="btn btn-secondary" data-action="add-filter" data-fid="${esc(fs.id)}">＋ Agregar filtro</button></div>`;
+  html += '<p class="caption" style="margin-bottom:14px;">Los filtros se aplican <strong>antes</strong> del mapeo de columnas, sobre las columnas originales.</p>';
+
+  for (let i = 0; i < fs.filters.length; i++) {
+    const f = fs.filters[i];
+    html += `<div class="filter-box">
+      <div class="filter-row">
+        <div class="form-group">
+          <label class="form-label">Columna origen</label>
+          <select data-action="filter-col" data-fid="${esc(fs.id)}" data-fidx="${i}">
+            <option value="">(seleccionar)</option>
+            ${fs.columns.map(c => `<option value="${esc(c)}"${c === f.column ? ' selected' : ''}>${esc(c)}</option>`).join('')}
+          </select>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Modo</label>
+          <select data-action="filter-mode" data-fid="${esc(fs.id)}" data-fidx="${i}">
+            <option value="include"${f.mode === 'include' ? ' selected' : ''}>Incluir</option>
+            <option value="exclude"${f.mode === 'exclude' ? ' selected' : ''}>Excluir</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Tipo de coincidencia</label>
+          <select data-action="filter-match" data-fid="${esc(fs.id)}" data-fidx="${i}">
+            <option value="exact"${f.match === 'exact' ? ' selected' : ''}>Es (exacto)</option>
+            <option value="contains"${f.match === 'contains' ? ' selected' : ''}>Contiene</option>
+            <option value="startswith"${f.match === 'startswith' ? ' selected' : ''}>Comienza con</option>
+          </select>
+        </div>
+        <button class="btn-danger-sm" data-action="remove-filter" data-fid="${esc(fs.id)}" data-fidx="${i}" title="Eliminar filtro">🗑</button>
+      </div>`;
+
+    if (f.match === 'exact') {
+      if (f.column) {
+        const allVals = getUniqueVals(fs, f.column);
+        const selectedSet = new Set(f.values || []);
+        html += `
+          <input type="text" class="checkbox-search" placeholder="Buscar valores…"
+            data-action="checkbox-search" data-fid="${esc(fs.id)}" data-fidx="${i}">
+          <div class="checkbox-list" id="cblist-${esc(fs.id)}-${i}">
+            ${allVals.map(v => `
+              <div class="checkbox-item">
+                <input type="checkbox" id="cb-${esc(fs.id)}-${i}-${esc(v)}"
+                  data-action="filter-check"
+                  data-fid="${esc(fs.id)}"
+                  data-fidx="${i}"
+                  data-val="${esc(v)}"
+                  ${selectedSet.has(v) ? 'checked' : ''}>
+                <label for="cb-${esc(fs.id)}-${i}-${esc(v)}">${esc(v)}</label>
+              </div>`).join('')}
+          </div>`;
+        if (!f.values || f.values.length === 0) {
+          html += `<div class="warn-msg" id="warn-${esc(fs.id)}-${i}">⚠️ Sin valores seleccionados — filtro inactivo.</div>`;
+        } else {
+          html += `<div class="warn-msg" id="warn-${esc(fs.id)}-${i}" style="display:none;">⚠️ Sin valores seleccionados — filtro inactivo.</div>`;
+        }
+      } else {
+        html += `<p class="caption">← Selecciona una columna origen para ver los valores disponibles.</p>`;
+      }
+    } else {
+      const matchLabel = f.match === 'contains' ? 'contiene' : 'comienza con';
+      html += `
+        <div class="chip-input-row">
+          <input type="text" placeholder="Escribe un valor (${esc(matchLabel)}) y presiona ＋ o Enter"
+            data-action="chip-input" data-fid="${esc(fs.id)}" data-fidx="${i}"
+            id="chip-inp-${esc(fs.id)}-${i}">
+          <button class="btn-add-chip" data-action="add-chip" data-fid="${esc(fs.id)}" data-fidx="${i}">＋</button>
+        </div>
+        <div class="chip-area">
+          ${(f.values || []).map((v, ci) => `
+            <span class="chip">${esc(v)}<button class="chip-remove" data-action="remove-chip" data-fid="${esc(fs.id)}" data-fidx="${i}" data-val="${esc(v)}" title="Eliminar">✕</button></span>
+          `).join('')}
+        </div>
+        ${(!f.values || f.values.length === 0) ? `<div class="warn-msg">⚠️ Sin valores agregados — filtro inactivo.</div>` : ''}`;
+    }
+
+    html += `</div>`;
+  }
+
+  if (fs.filters.length === 0) {
+    html += `<p class="info-msg">No hay filtros configurados. Haz clic en <strong>＋ Agregar filtro</strong> para comenzar.</p>`;
+  }
+
+  return html;
+}
+
+function renderReplacementsTab(fs) {
+  let html = `<div class="add-row"><button class="btn btn-secondary" data-action="add-replacement" data-fid="${esc(fs.id)}">＋ Agregar reemplazo</button></div>`;
+  html += '<p class="caption" style="margin-bottom:14px;">Los reemplazos se aplican <strong>antes</strong> del mapeo de columnas, sobre las columnas originales.</p>';
+
+  for (let i = 0; i < fs.replacements.length; i++) {
+    const r = fs.replacements[i];
+    html += `<div class="replacement-box">
+      <div class="replacement-row">
+        <div class="form-group">
+          <label class="form-label">Columna origen</label>
+          <select data-action="rep-col" data-fid="${esc(fs.id)}" data-ridx="${i}">
+            <option value="">(seleccionar)</option>
+            ${fs.columns.map(c => `<option value="${esc(c)}"${c === r.column ? ' selected' : ''}>${esc(c)}</option>`).join('')}
+          </select>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Tipo de reemplazo</label>
+          <select data-action="rep-mode" data-fid="${esc(fs.id)}" data-ridx="${i}">
+            <option value="specific"${r.mode === 'specific' ? ' selected' : ''}>Reemplazar un valor específico</option>
+            <option value="overwrite"${r.mode === 'overwrite' ? ' selected' : ''}>Establecer toda la columna a un valor fijo</option>
+          </select>
+        </div>
+        <button class="btn-danger-sm" data-action="remove-replacement" data-fid="${esc(fs.id)}" data-ridx="${i}" title="Eliminar">🗑</button>
+      </div>`;
+
+    if (r.mode === 'specific') {
+      html += `<div class="rep-values-row">
+        <div class="form-group">
+          <label class="form-label">Reemplazar este valor</label>
+          <input type="text" value="${esc(r.oldVal)}" placeholder="Valor original"
+            data-action="rep-oldval" data-fid="${esc(fs.id)}" data-ridx="${i}">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Con este valor</label>
+          <input type="text" value="${esc(r.newVal)}" placeholder="Valor nuevo"
+            data-action="rep-newval" data-fid="${esc(fs.id)}" data-ridx="${i}">
+        </div>
+      </div>`;
+    } else {
+      html += `<div class="form-group">
+        <label class="form-label">Valor fijo a establecer</label>
+        <input type="text" value="${esc(r.newVal)}" placeholder="Valor fijo"
+          data-action="rep-newval" data-fid="${esc(fs.id)}" data-ridx="${i}">
+      </div>`;
+    }
+
+    html += `</div>`;
+  }
+
+  if (fs.replacements.length === 0) {
+    html += `<p class="info-msg">No hay reemplazos configurados. Haz clic en <strong>＋ Agregar reemplazo</strong> para comenzar.</p>`;
+  }
+
+  return html;
+}
+
+function renderTable(rows, maxRows) {
+  if (!rows || rows.length === 0) {
+    return `<p class="info-msg">Sin datos para mostrar.</p>`;
+  }
+  const cols = Object.keys(rows[0]);
+  const display = rows.slice(0, maxRows);
+  let html = `<div class="table-wrap"><table>
+    <thead><tr>${cols.map(c => `<th>${esc(c)}</th>`).join('')}</tr></thead>
+    <tbody>
+      ${display.map(row => `<tr>${cols.map(c => `<td title="${esc(row[c])}">${esc(row[c])}</td>`).join('')}</tr>`).join('')}
+    </tbody>
+  </table></div>`;
+  if (rows.length > maxRows) {
+    html += `<p class="caption" style="margin-top:6px;">Mostrando ${maxRows} de ${rows.length.toLocaleString()} filas.</p>`;
+  }
+  return html;
+}
+
+function renderPreviewTab(fs) {
+  let html = '';
+
+  // Raw data section
+  html += `<div class="preview-section-title">Datos originales (primeras 10 filas)</div>`;
+  html += renderTable(fs.data, 10);
+
+  html += `<hr>`;
+
+  // Processed data section
+  html += `<div class="preview-section-title">Datos procesados</div>`;
+  html += `<div class="preview-btn-row">
+    <button class="btn btn-primary" data-action="run-preview" data-fid="${esc(fs.id)}">▶ Ver vista previa</button>
+  </div>`;
+
+  if (fs.previewError) {
+    html += `<div class="error-msg">Error de procesamiento: ${esc(fs.previewError)}</div>`;
+  } else if (fs.preview !== null) {
+    html += renderTable(fs.preview, 50);
+    html += `<p class="caption" style="margin-top:8px;">${(fs.preview.length).toLocaleString()} filas · 22 columnas — haz clic en ▶ para actualizar tras los cambios.</p>`;
+  } else {
+    html += `<p class="info-msg">Haz clic en ▶ Ver vista previa para ver el resultado procesado.</p>`;
+  }
+
+  return html;
+}
+
+function renderPanel(fs) {
+  const headerClass = `panel-header${fs.expanded ? ' open' : ''}`;
+  const bodyClass = `panel-body${fs.expanded ? ' open' : ''}`;
+  const tabs = [
+    { id: 'map',  label: '🗂 Mapeo de Columnas' },
+    { id: 'filt', label: '🔍 Filtros' },
+    { id: 'rep',  label: '✏️ Reemplazos de Valores' },
+    { id: 'prev', label: '👁 Vista Previa' },
+  ];
+
+  let html = `<div class="file-panel" id="panel-${esc(fs.id)}">
+    <div class="${headerClass}" data-action="toggle-panel" data-fid="${esc(fs.id)}">
+      <span class="panel-chevron">▶</span>
+      <span class="panel-title">${esc(fs.name)}</span>
+      <span class="panel-meta">${fs.data.length.toLocaleString()} filas × ${fs.columns.length} cols</span>
+      <button class="panel-remove" data-action="remove-file" data-fid="${esc(fs.id)}" title="Eliminar archivo">✕</button>
+    </div>`;
+
+  if (fs.expanded) {
+    html += `<div class="${bodyClass}">
+      <div class="tab-bar">
+        ${tabs.map(t => `<button class="tab-btn${fs.activeTab === t.id ? ' active' : ''}" data-action="switch-tab" data-fid="${esc(fs.id)}" data-tab="${t.id}">${t.label}</button>`).join('')}
+      </div>`;
+
+    for (const t of tabs) {
+      const active = fs.activeTab === t.id;
+      html += `<div class="tab-content${active ? ' active' : ''}" id="tab-${esc(fs.id)}-${t.id}">`;
+      if (active) {
+        if (t.id === 'map')  html += renderColMapTab(fs);
+        if (t.id === 'filt') html += renderFiltersTab(fs);
+        if (t.id === 'rep')  html += renderReplacementsTab(fs);
+        if (t.id === 'prev') html += renderPreviewTab(fs);
+      }
+      html += `</div>`;
+    }
+
+    html += `</div>`;
+  }
+
+  html += `</div>`;
+  return html;
+}
+
+// ─── Full render / targeted re-render ────────────────────────────────────────
+
+function renderAll() {
+  const container = document.getElementById('panels-container');
+  container.innerHTML = files.map(renderPanel).join('');
+  document.getElementById('combine-section').style.display = files.length > 0 ? '' : 'none';
+}
+
+function rerenderPanel(fid) {
+  const fs = files.find(f => f.id === fid);
+  if (!fs) return;
+  const el = document.getElementById(`panel-${fid}`);
+  if (!el) return;
+  const tmp = document.createElement('div');
+  tmp.innerHTML = renderPanel(fs);
+  el.replaceWith(tmp.firstElementChild);
+}
+
+function rerenderActiveTabContent(fid) {
+  const fs = files.find(f => f.id === fid);
+  if (!fs) return;
+  const tabEl = document.getElementById(`tab-${fid}-${fs.activeTab}`);
+  if (!tabEl) return;
+  if (fs.activeTab === 'map')  tabEl.innerHTML = renderColMapTab(fs);
+  if (fs.activeTab === 'filt') tabEl.innerHTML = renderFiltersTab(fs);
+  if (fs.activeTab === 'rep')  tabEl.innerHTML = renderReplacementsTab(fs);
+  if (fs.activeTab === 'prev') tabEl.innerHTML = renderPreviewTab(fs);
+}
+
+// ─── File loading ─────────────────────────────────────────────────────────────
+
+function loadFile(file) {
+  if (files.some(f => f.name === file.name)) return; // skip duplicate names
+
+  Papa.parse(file, {
+    header: true,
+    skipEmptyLines: true,
+    complete(result) {
+      const columns = result.meta.fields || [];
+      const schemaSet = new Set(FINAL_SCHEMA);
+      const colMap = {};
+      for (const col of columns) {
+        if (schemaSet.has(col)) colMap[col] = col;
+      }
+
+      const id = `f-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+      files.push({
+        id,
+        name: file.name,
+        data: result.data,
+        columns,
+        colMap,
+        filters: [],
+        replacements: [],
+        expanded: true,
+        activeTab: 'map',
+        preview: null,
+        previewError: null,
+      });
+      renderAll();
+    },
+    error(err) {
+      alert(`Error al leer ${file.name}: ${err.message}`);
+    }
+  });
+}
+
+// ─── Event delegation ─────────────────────────────────────────────────────────
+
+document.addEventListener('change', e => {
+  const el = e.target;
+  const action = el.dataset.action;
+  if (!action) return;
+
+  const fid = el.dataset.fid;
+  const fs = files.find(f => f.id === fid);
+
+  if (action === 'col-map' && fs) {
+    const tgt = el.dataset.tgt;
+    // Remove any existing mapping to this target
+    for (const k of Object.keys(fs.colMap)) {
+      if (fs.colMap[k] === tgt) delete fs.colMap[k];
+    }
+    const src = el.value;
+    if (src) {
+      // Remove any existing mapping FROM this source
+      delete fs.colMap[src];
+      fs.colMap[src] = tgt;
+    }
+    // No re-render needed — select value already updated by DOM
+    return;
+  }
+
+  if (action === 'filter-col' && fs) {
+    const fidx = parseInt(el.dataset.fidx, 10);
+    const f = fs.filters[fidx];
+    if (f) {
+      if (f.column !== el.value) f.values = [];
+      f.column = el.value;
+      rerenderPanel(fid);
+    }
+    return;
+  }
+
+  if (action === 'filter-mode' && fs) {
+    const fidx = parseInt(el.dataset.fidx, 10);
+    const f = fs.filters[fidx];
+    if (f) {
+      f.mode = el.value;
+      // No re-render needed
+    }
+    return;
+  }
+
+  if (action === 'filter-match' && fs) {
+    const fidx = parseInt(el.dataset.fidx, 10);
+    const f = fs.filters[fidx];
+    if (f) {
+      if (f.match !== el.value) f.values = [];
+      f.match = el.value;
+      rerenderPanel(fid);
+    }
+    return;
+  }
+
+  if (action === 'filter-check' && fs) {
+    const fidx = parseInt(el.dataset.fidx, 10);
+    const val = el.dataset.val;
+    const f = fs.filters[fidx];
+    if (f) {
+      if (el.checked) {
+        if (!f.values.includes(val)) f.values.push(val);
+      } else {
+        f.values = f.values.filter(v => v !== val);
+      }
+      // Update only the warning indicator without full re-render
+      const warnEl = document.getElementById(`warn-${fid}-${fidx}`);
+      if (warnEl) {
+        warnEl.style.display = f.values.length === 0 ? '' : 'none';
+      }
+    }
+    return;
+  }
+
+  if (action === 'rep-col' && fs) {
+    const ridx = parseInt(el.dataset.ridx, 10);
+    const r = fs.replacements[ridx];
+    if (r) {
+      r.column = el.value;
+      // No re-render needed
+    }
+    return;
+  }
+
+  if (action === 'rep-mode' && fs) {
+    const ridx = parseInt(el.dataset.ridx, 10);
+    const r = fs.replacements[ridx];
+    if (r) {
+      r.mode = el.value;
+      rerenderPanel(fid);
+    }
+    return;
+  }
+});
+
+document.addEventListener('input', e => {
+  const el = e.target;
+  const action = el.dataset.action;
+  if (!action) return;
+
+  const fid = el.dataset.fid;
+  const fs = files.find(f => f.id === fid);
+
+  if (action === 'rep-oldval' && fs) {
+    const ridx = parseInt(el.dataset.ridx, 10);
+    const r = fs.replacements[ridx];
+    if (r) r.oldVal = el.value;
+    return;
+  }
+
+  if (action === 'rep-newval' && fs) {
+    const ridx = parseInt(el.dataset.ridx, 10);
+    const r = fs.replacements[ridx];
+    if (r) r.newVal = el.value;
+    return;
+  }
+
+  if (action === 'checkbox-search') {
+    const fidx = parseInt(el.dataset.fidx, 10);
+    const query = el.value.toLowerCase();
+    const listEl = document.getElementById(`cblist-${fid}-${fidx}`);
+    if (listEl) {
+      const items = listEl.querySelectorAll('.checkbox-item');
+      for (const item of items) {
+        const label = item.querySelector('label');
+        const text = label ? label.textContent.toLowerCase() : '';
+        item.style.display = text.includes(query) ? '' : 'none';
+      }
+    }
+    return;
+  }
+});
+
+document.addEventListener('keydown', e => {
+  const el = e.target;
+  if (e.key !== 'Enter') return;
+  if (el.dataset.action !== 'chip-input') return;
+
+  const fid = el.dataset.fid;
+  const fidx = parseInt(el.dataset.fidx, 10);
+  const fs = files.find(f => f.id === fid);
+  if (!fs) return;
+
+  const val = el.value.trim();
+  if (val) {
+    const f = fs.filters[fidx];
+    if (f && !f.values.includes(val)) {
+      f.values.push(val);
+      rerenderPanel(fid);
+    }
+  }
+  e.preventDefault();
+});
+
+document.addEventListener('click', e => {
+  const el = e.target.closest('[data-action]');
+  if (!el) return;
+  const action = el.dataset.action;
+  const fid = el.dataset.fid;
+  const fs = fid ? files.find(f => f.id === fid) : null;
+
+  if (action === 'toggle-panel' && fs) {
+    fs.expanded = !fs.expanded;
+    rerenderPanel(fid);
+    return;
+  }
+
+  if (action === 'remove-file') {
+    e.stopPropagation();
+    files = files.filter(f => f.id !== fid);
+    renderAll();
+    // Reset combine state
+    combinedBlob = null;
+    document.getElementById('download-btn').style.display = 'none';
+    document.getElementById('combine-status').innerHTML = '';
+    return;
+  }
+
+  if (action === 'switch-tab' && fs) {
+    fs.activeTab = el.dataset.tab;
+    rerenderPanel(fid);
+    return;
+  }
+
+  if (action === 'add-filter' && fs) {
+    fs.filters.push({ column: '', mode: 'include', match: 'exact', values: [] });
+    rerenderPanel(fid);
+    return;
+  }
+
+  if (action === 'remove-filter' && fs) {
+    const fidx = parseInt(el.dataset.fidx, 10);
+    fs.filters.splice(fidx, 1);
+    rerenderPanel(fid);
+    return;
+  }
+
+  if (action === 'add-chip' && fs) {
+    const fidx = parseInt(el.dataset.fidx, 10);
+    const inputEl = document.getElementById(`chip-inp-${fid}-${fidx}`);
+    const val = inputEl ? inputEl.value.trim() : '';
+    if (val) {
+      const f = fs.filters[fidx];
+      if (f && !f.values.includes(val)) {
+        f.values.push(val);
+        rerenderPanel(fid);
+      }
+    }
+    return;
+  }
+
+  if (action === 'remove-chip' && fs) {
+    const fidx = parseInt(el.dataset.fidx, 10);
+    const val = el.dataset.val;
+    const f = fs.filters[fidx];
+    if (f) {
+      f.values = f.values.filter(v => v !== val);
+      rerenderPanel(fid);
+    }
+    return;
+  }
+
+  if (action === 'add-replacement' && fs) {
+    fs.replacements.push({ column: '', mode: 'specific', oldVal: '', newVal: '' });
+    rerenderPanel(fid);
+    return;
+  }
+
+  if (action === 'remove-replacement' && fs) {
+    const ridx = parseInt(el.dataset.ridx, 10);
+    fs.replacements.splice(ridx, 1);
+    rerenderPanel(fid);
+    return;
+  }
+
+  if (action === 'run-preview' && fs) {
+    try {
+      const result = processFile(fs);
+      fs.preview = result;
+      fs.previewError = null;
+    } catch (err) {
+      fs.preview = null;
+      fs.previewError = err.message;
+    }
+    rerenderPanel(fid);
+    return;
+  }
+
+  if (action === 'combine') {
+    runCombine();
+    return;
+  }
+
+  if (action === 'download') {
+    if (combinedBlob) {
+      const url = URL.createObjectURL(combinedBlob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'jira_combinado.xlsx';
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(url), 5000);
+    }
+    return;
+  }
+});
+
+// ─── Combine ─────────────────────────────────────────────────────────────────
+
+function runCombine() {
+  const statusEl = document.getElementById('combine-status');
+  statusEl.innerHTML = '<p class="info-msg">Procesando archivos…</p>';
+
+  // Use setTimeout to let the UI update before heavy processing
+  setTimeout(() => {
+    try {
+      let allRows = [];
+      const errors = [];
+
+      for (const fs of files) {
+        try {
+          const rows = processFile(fs);
+          allRows = allRows.concat(rows);
+        } catch (err) {
+          errors.push(`<strong>${esc(fs.name)}</strong>: ${esc(err.message)}`);
+        }
+      }
+
+      let html = '';
+      if (errors.length > 0) {
+        html += errors.map(e => `<div class="error-msg" style="margin-bottom:8px;">${e}</div>`).join('');
+      }
+
+      if (allRows.length > 0) {
+        // Build XLSX
+        const wb = XLSX.utils.book_new();
+        const ws = XLSX.utils.json_to_sheet(allRows, { header: FINAL_SCHEMA });
+        XLSX.utils.book_append_sheet(wb, ws, 'Datos');
+        const arrBuf = XLSX.write(wb, { type: 'array', bookType: 'xlsx' });
+        combinedBlob = new Blob([arrBuf], {
+          type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        });
+
+        document.getElementById('download-btn').style.display = '';
+        html += `<div class="success-msg">✅ Combinados <strong>${files.length}</strong> archivo(s) → <strong>${allRows.length.toLocaleString()} filas</strong> × 22 columnas</div>`;
+      } else {
+        document.getElementById('download-btn').style.display = 'none';
+        combinedBlob = null;
+        if (errors.length === 0) {
+          html += `<div class="info-msg">⚠️ No se generaron filas. Revisa el mapeo de columnas en cada archivo.</div>`;
+        }
+      }
+
+      statusEl.innerHTML = html;
+    } catch (err) {
+      statusEl.innerHTML = `<div class="error-msg">Error inesperado: ${esc(err.message)}</div>`;
+    }
+  }, 20);
+}
+
+// ─── File input & drag-drop ───────────────────────────────────────────────────
+
+const fileInput = document.getElementById('file-input');
+const uploadZone = document.getElementById('upload-zone');
+
+fileInput.addEventListener('change', e => {
+  const fileList = Array.from(e.target.files || []);
+  for (const f of fileList) loadFile(f);
+  // Reset so re-uploading same filename works
+  fileInput.value = '';
+});
+
+uploadZone.addEventListener('dragover', e => {
+  e.preventDefault();
+  uploadZone.classList.add('drag-over');
+});
+
+uploadZone.addEventListener('dragleave', e => {
+  if (!uploadZone.contains(e.relatedTarget)) {
+    uploadZone.classList.remove('drag-over');
+  }
+});
+
+uploadZone.addEventListener('drop', e => {
+  e.preventDefault();
+  uploadZone.classList.remove('drag-over');
+  const dropped = Array.from(e.dataTransfer.files || []).filter(f => f.name.endsWith('.csv'));
+  for (const f of dropped) loadFile(f);
+});
+
+// Initial render
+renderAll();
+</script>
+</body>
+</html>
