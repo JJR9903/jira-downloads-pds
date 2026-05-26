@@ -593,6 +593,7 @@ const MONTH_MAP = {
 
 let files = []; // array of file state objects
 let combinedBlob = null;
+let lastMergeResult = null; // stores latest Baseline ↔ Descargas merge
 
 // ─── Date helpers ─────────────────────────────────────────────────────────────
 
@@ -614,6 +615,14 @@ function parseDate(s) {
 function fmtDate(d) {
   if (!d) return '';
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+// Parse a "YYYY-MM-DD" string back to a Date object (for Excel export).
+function parseYMD(s) {
+  if (!s || typeof s !== 'string') return null;
+  const m = s.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!m) return null;
+  return new Date(parseInt(m[1], 10), parseInt(m[2], 10) - 1, parseInt(m[3], 10));
 }
 
 // ─── HTML escaping ────────────────────────────────────────────────────────────
@@ -1355,6 +1364,11 @@ document.addEventListener('click', e => {
     }
     return;
   }
+
+  if (action === 'download-merge') {
+    if (lastMergeResult) downloadMergeExcel(lastMergeResult);
+    return;
+  }
 });
 
 // ─── Combine ─────────────────────────────────────────────────────────────────
@@ -1495,27 +1509,138 @@ function renderBaselineTable(rows, sheetName, colLabel) {
     </div>`;
 }
 
+// ─── Baseline merge logic ─────────────────────────────────────────────────────
+
+function computeBaselineMerge(rowsBaseline, rowsDescargas) {
+  // Infer col-B name from Baseline sheet (the date column, usually "Baseline")
+  const baselineColB = rowsBaseline.length > 0
+    ? (Object.keys(rowsBaseline[0]).find(k => k !== 'Issue key') || 'Baseline')
+    : 'Baseline';
+
+  // Build lookup: Issue key → col-B value (from Baseline sheet)
+  const baseMap = new Map();
+  for (const row of rowsBaseline) {
+    const key = String(row['Issue key'] ?? '').trim();
+    if (key) baseMap.set(key, String(row[baselineColB] ?? '').trim());
+  }
+
+  // Build lookup: Issue key → Due date (from Descargas, only those two cols)
+  const descMap = new Map();
+  for (const row of rowsDescargas) {
+    const key = String(row['Issue key'] ?? '').trim();
+    if (key) descMap.set(key, String(row['Due date'] ?? '').trim());
+  }
+
+  const allKeys = new Set([...baseMap.keys(), ...descMap.keys()]);
+  const result = [];
+
+  for (const key of allKeys) {
+    const inBase = baseMap.has(key);
+    const inDesc = descMap.has(key);
+    const baseVal = inBase ? baseMap.get(key) : '';
+    const dueVal  = inDesc ? descMap.get(key) : '';
+
+    let match;
+    if      (inBase && !inDesc)          match = 'Only Baseline';
+    else if (!inBase && inDesc)          match = 'new Issue key';
+    else if (baseVal !== '')             match = 'Old Baseline';
+    else if (dueVal  !== '')             match = 'New Baseline';
+    else                                 match = 'empty';
+
+    result.push({ 'Issue key': key, [baselineColB]: baseVal, 'Due date': dueVal, match });
+  }
+
+  return { rows: result, dateCol: baselineColB };
+}
+
+function renderMergeSection(mergeResult) {
+  if (!mergeResult) return '';
+  const { rows, dateCol } = mergeResult;
+  return `
+    <hr>
+    <div class="sheet-section">
+      <div class="sheet-title">
+        Merge: Baseline ↔ Descargas
+        <span class="sheet-badge">${rows.length.toLocaleString()} filas</span>
+      </div>
+      <div class="preview-btn-row" style="margin-bottom:12px;">
+        <button class="btn btn-primary" data-action="download-merge">⬇️ Descargar Excel</button>
+      </div>
+      ${renderTable(rows, rows.length)}
+    </div>`;
+}
+
+function downloadMergeExcel(mergeResult) {
+  const { rows, dateCol } = mergeResult;
+  const headers = ['Issue key', dateCol, 'Due date', 'match'];
+
+  // Convert YYYY-MM-DD strings back to Date objects for proper Excel date cells
+  const excelRows = rows.map(row => {
+    const out = {};
+    for (const h of headers) {
+      const v = row[h] ?? '';
+      out[h] = (h === dateCol || h === 'Due date') ? (parseYMD(v) ?? '') : v;
+    }
+    return out;
+  });
+
+  const wb = XLSX.utils.book_new();
+  const ws = XLSX.utils.json_to_sheet(excelRows, { header: headers, cellDates: true });
+
+  // Apply YYYY-MM-DD number format to every date cell in the date columns
+  const dateCols = new Set(
+    headers.map((h, i) => (h === dateCol || h === 'Due date') ? i : -1).filter(i => i >= 0)
+  );
+  const range = XLSX.utils.decode_range(ws['!ref'] || 'A1');
+  for (let r = 1; r <= range.e.r; r++) {
+    for (const c of dateCols) {
+      const addr = XLSX.utils.encode_cell({ r, c });
+      if (ws[addr] && ws[addr].t === 'd') ws[addr].z = 'YYYY-MM-DD';
+    }
+  }
+
+  XLSX.utils.book_append_sheet(wb, ws, 'Merge');
+  const arrBuf = XLSX.write(wb, { type: 'array', bookType: 'xlsx', cellDates: true });
+  const blob = new Blob([arrBuf], {
+    type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+  });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'baseline_merge.xlsx';
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 5000);
+}
+
+// ─── Baseline file loader ─────────────────────────────────────────────────────
+
 function loadBaselineFile(file) {
   const statusEl = document.getElementById('baseline-status');
   const contentEl = document.getElementById('baseline-content');
   statusEl.innerHTML = '<p class="info-msg">Leyendo archivo…</p>';
   contentEl.innerHTML = '';
+  lastMergeResult = null;
 
   const reader = new FileReader();
   reader.onload = e => {
     try {
-      // cellDates:true converts Excel date serial numbers to JS Date objects
       const wb = XLSX.read(new Uint8Array(e.target.result), { type: 'array', cellDates: true });
 
-      const rowsBaseline   = readSheetCols(wb, 'Baseline',    1);         // A:B
-      const rowsFIBaseline = readSheetCols(wb, 'FI_Baseline', 2);         // A:C
-      const rowsDescargas  = readSheetCols(wb, 'Descargas' /* all cols */); // all columns
+      const rowsBaseline   = readSheetCols(wb, 'Baseline',    1); // A:B
+      const rowsFIBaseline = readSheetCols(wb, 'FI_Baseline', 2); // A:C
+      const rowsDescargas  = readSheetCols(wb, 'Descargas');      // all cols
+
+      // Compute merge if both sheets are present
+      if (rowsBaseline && rowsDescargas) {
+        lastMergeResult = computeBaselineMerge(rowsBaseline, rowsDescargas);
+      }
 
       statusEl.innerHTML = '';
       contentEl.innerHTML =
         renderBaselineTable(rowsBaseline,   'Baseline',    'Cols A:B') +
         renderBaselineTable(rowsFIBaseline, 'FI_Baseline', 'Cols A:C') +
-        renderBaselineTable(rowsDescargas,  'Descargas',   'Todas las columnas');
+        renderBaselineTable(rowsDescargas,  'Descargas',   'Todas las columnas') +
+        renderMergeSection(lastMergeResult);
     } catch (err) {
       statusEl.innerHTML = `<div class="error-msg">Error al leer el archivo: ${esc(err.message)}</div>`;
     }
