@@ -158,11 +158,7 @@ def process_dataframe(df: pd.DataFrame, config: dict) -> pd.DataFrame:
 
 def to_excel_bytes(df: pd.DataFrame) -> bytes:
     buf = BytesIO()
-    df = df.copy()
-    for col in df.columns:
-        if pd.api.types.is_datetime64_any_dtype(df[col]):
-            df[col] = df[col].dt.date
-    with pd.ExcelWriter(buf, engine="openpyxl") as writer:
+    with pd.ExcelWriter(buf, engine="openpyxl", datetime_format="YYYY-MM-DD") as writer:
         df.to_excel(writer, index=False, sheet_name="Datos")
     return buf.getvalue()
 
@@ -568,7 +564,7 @@ with tab_procesador:
 with tab_baseline:
     st.markdown(
         "Sube el archivo Excel de Baseline para cargar las hojas "
-        "**Baseline** (columnas A:B) y **FI_Baseline** (columnas A:C)."
+        "**Baseline** (A:B), **FI_Baseline** (A:C) y **Descargas** (todas las columnas)."
     )
 
     baseline_file = st.file_uploader(
@@ -579,22 +575,26 @@ with tab_baseline:
 
     if baseline_file:
         try:
-            df_baseline = pd.read_excel(baseline_file, sheet_name="Baseline", usecols="A:B", dtype=str)
+            df_baseline   = pd.read_excel(baseline_file, sheet_name="Baseline",    usecols="A:B")
             baseline_file.seek(0)
-            df_fi = pd.read_excel(baseline_file, sheet_name="FI_Baseline", usecols="A:C", dtype=str)
+            df_fi         = pd.read_excel(baseline_file, sheet_name="FI_Baseline", usecols="A:C")
+            baseline_file.seek(0)
+            df_descargas  = pd.read_excel(baseline_file, sheet_name="Descargas")
 
-            st.markdown("### Hoja: Baseline")
-            st.dataframe(df_baseline, use_container_width=True)
-            st.caption(f"{len(df_baseline):,} filas · {len(df_baseline.columns)} columnas")
-
-            st.markdown("### Hoja: FI_Baseline")
-            st.dataframe(df_fi, use_container_width=True)
-            st.caption(f"{len(df_fi):,} filas · {len(df_fi.columns)} columnas")
+            for label, df_show, hint in [
+                ("Baseline",    df_baseline,  "Columnas A:B"),
+                ("FI_Baseline", df_fi,         "Columnas A:C"),
+                ("Descargas",   df_descargas,  "Todas las columnas"),
+            ]:
+                st.markdown(f"### Hoja: {label}")
+                st.caption(hint)
+                st.dataframe(df_show, use_container_width=True)
+                st.caption(f"{len(df_show):,} filas · {len(df_show.columns)} columnas")
 
         except KeyError as e:
             st.error(
                 f"No se encontró la hoja {e} en el archivo. "
-                "Verifica que el Excel tenga hojas llamadas 'Baseline' y 'FI_Baseline'."
+                "Verifica que el Excel tenga hojas llamadas 'Baseline', 'FI_Baseline' y 'Descargas'."
             )
         except Exception as e:
             st.error(f"Error al leer el archivo: {e}")

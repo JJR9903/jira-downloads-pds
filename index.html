@@ -550,7 +550,8 @@
   <h1>📋 Baseline</h1>
   <p class="subtitle">
     Sube el archivo Excel de Baseline para cargar las hojas
-    <strong>Baseline</strong> (columnas A:B) y <strong>FI_Baseline</strong> (columnas A:C).
+    <strong>Baseline</strong> (A:B), <strong>FI_Baseline</strong> (A:C) y
+    <strong>Descargas</strong> (todas las columnas).
   </p>
 
   <div class="baseline-upload-zone" id="baseline-upload-zone">
@@ -1460,13 +1461,17 @@ function readSheetCols(wb, sheetName, maxCol) {
   const ref = ws['!ref'];
   if (!ref) return [];
   const range = XLSX.utils.decode_range(ref);
-  range.e.c = maxCol; // clamp to requested columns
+  if (maxCol !== undefined) range.e.c = Math.min(range.e.c, maxCol);
   const rows = XLSX.utils.sheet_to_json(ws, { range, header: 1, defval: '' });
   if (rows.length === 0) return [];
   const headers = rows[0].map(String);
   return rows.slice(1).map(row => {
     const obj = {};
-    headers.forEach((h, i) => { obj[h] = String(row[i] ?? ''); });
+    headers.forEach((h, i) => {
+      const val = row[i] ?? '';
+      // cellDates:true makes Excel date cells arrive as JS Date objects
+      obj[h] = val instanceof Date ? fmtDate(val) : String(val);
+    });
     return obj;
   });
 }
@@ -1499,15 +1504,18 @@ function loadBaselineFile(file) {
   const reader = new FileReader();
   reader.onload = e => {
     try {
-      const wb = XLSX.read(new Uint8Array(e.target.result), { type: 'array' });
+      // cellDates:true converts Excel date serial numbers to JS Date objects
+      const wb = XLSX.read(new Uint8Array(e.target.result), { type: 'array', cellDates: true });
 
-      const rowsBaseline   = readSheetCols(wb, 'Baseline',    1); // cols A:B → maxCol index 1
-      const rowsFIBaseline = readSheetCols(wb, 'FI_Baseline', 2); // cols A:C → maxCol index 2
+      const rowsBaseline   = readSheetCols(wb, 'Baseline',    1);         // A:B
+      const rowsFIBaseline = readSheetCols(wb, 'FI_Baseline', 2);         // A:C
+      const rowsDescargas  = readSheetCols(wb, 'Descargas' /* all cols */); // all columns
 
       statusEl.innerHTML = '';
       contentEl.innerHTML =
         renderBaselineTable(rowsBaseline,   'Baseline',    'Cols A:B') +
-        renderBaselineTable(rowsFIBaseline, 'FI_Baseline', 'Cols A:C');
+        renderBaselineTable(rowsFIBaseline, 'FI_Baseline', 'Cols A:C') +
+        renderBaselineTable(rowsDescargas,  'Descargas',   'Todas las columnas');
     } catch (err) {
       statusEl.innerHTML = `<div class="error-msg">Error al leer el archivo: ${esc(err.message)}</div>`;
     }
