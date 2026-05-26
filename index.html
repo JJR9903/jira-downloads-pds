@@ -574,14 +574,14 @@ function applyReplacements(data, replacements) {
 }
 
 function processFile(fs) {
+  // 1. Filters — on original source columns
   let data = applyFilters(fs.data, fs.filters);
-  data = applyReplacements(data, fs.replacements);
 
+  // 2. Column mapping
   const colMap = fs.colMap;
   const mappedEntries = Object.entries(colMap).filter(([src, tgt]) => src && tgt);
   if (mappedEntries.length === 0) return [];
 
-  // Build output rows
   data = data.map(row => {
     const out = {};
     for (const [src, tgt] of mappedEntries) {
@@ -599,7 +599,10 @@ function processFile(fs) {
     return out;
   });
 
-  // Parse/format date columns
+  // 3. Replacements — on mapped/target schema columns
+  data = applyReplacements(data, fs.replacements);
+
+  // 4. Parse/format date columns
   data = data.map(row => {
     const out = { ...row };
     for (const col of DATE_COLS) {
@@ -616,6 +619,21 @@ function processFile(fs) {
 }
 
 // ─── Render helpers ───────────────────────────────────────────────────────────
+
+function updateExactChips(fid, fidx) {
+  const fs = files.find(f => f.id === fid);
+  if (!fs) return;
+  const f = fs.filters[fidx];
+  if (!f) return;
+  const chipsEl = document.getElementById(`exact-chips-${fid}-${fidx}`);
+  if (chipsEl) {
+    chipsEl.innerHTML = (f.values || []).map(v =>
+      `<span class="chip">${esc(v)}<button class="chip-remove" data-action="uncheck-exact" data-fid="${esc(fid)}" data-fidx="${fidx}" data-val="${esc(v)}" title="Eliminar">✕</button></span>`
+    ).join('');
+  }
+  const warnEl = document.getElementById(`warn-${fid}-${fidx}`);
+  if (warnEl) warnEl.style.display = (f.values.length === 0) ? '' : 'none';
+}
 
 function getUniqueVals(fs, column) {
   if (!column) return [];
@@ -683,7 +701,14 @@ function renderFiltersTab(fs) {
       if (f.column) {
         const allVals = getUniqueVals(fs, f.column);
         const selectedSet = new Set(f.values || []);
+        const hasVals = f.values && f.values.length > 0;
+        // Chip display for selected values
+        const chipsHTML = (f.values || []).map(v =>
+          `<span class="chip">${esc(v)}<button class="chip-remove" data-action="uncheck-exact" data-fid="${esc(fs.id)}" data-fidx="${i}" data-val="${esc(v)}" title="Eliminar">✕</button></span>`
+        ).join('');
         html += `
+          <div class="chip-area" id="exact-chips-${esc(fs.id)}-${i}">${chipsHTML}</div>
+          <div class="warn-msg" id="warn-${esc(fs.id)}-${i}" style="${hasVals ? 'display:none;' : ''}">⚠️ Sin valores seleccionados — filtro inactivo.</div>
           <input type="text" class="checkbox-search" placeholder="Buscar valores…"
             data-action="checkbox-search" data-fid="${esc(fs.id)}" data-fidx="${i}">
           <div class="checkbox-list" id="cblist-${esc(fs.id)}-${i}">
@@ -698,11 +723,6 @@ function renderFiltersTab(fs) {
                 <label for="cb-${esc(fs.id)}-${i}-${esc(v)}">${esc(v)}</label>
               </div>`).join('')}
           </div>`;
-        if (!f.values || f.values.length === 0) {
-          html += `<div class="warn-msg" id="warn-${esc(fs.id)}-${i}">⚠️ Sin valores seleccionados — filtro inactivo.</div>`;
-        } else {
-          html += `<div class="warn-msg" id="warn-${esc(fs.id)}-${i}" style="display:none;">⚠️ Sin valores seleccionados — filtro inactivo.</div>`;
-        }
       } else {
         html += `<p class="caption">← Selecciona una columna origen para ver los valores disponibles.</p>`;
       }
@@ -735,17 +755,17 @@ function renderFiltersTab(fs) {
 
 function renderReplacementsTab(fs) {
   let html = `<div class="add-row"><button class="btn btn-secondary" data-action="add-replacement" data-fid="${esc(fs.id)}">＋ Agregar reemplazo</button></div>`;
-  html += '<p class="caption" style="margin-bottom:14px;">Los reemplazos se aplican <strong>antes</strong> del mapeo de columnas, sobre las columnas originales.</p>';
+  html += '<p class="caption" style="margin-bottom:14px;">Los reemplazos se aplican <strong>después</strong> de los filtros y el mapeo de columnas, sobre las columnas del esquema destino.</p>';
 
   for (let i = 0; i < fs.replacements.length; i++) {
     const r = fs.replacements[i];
     html += `<div class="replacement-box">
       <div class="replacement-row">
         <div class="form-group">
-          <label class="form-label">Columna origen</label>
+          <label class="form-label">Columna destino</label>
           <select data-action="rep-col" data-fid="${esc(fs.id)}" data-ridx="${i}">
             <option value="">(seleccionar)</option>
-            ${fs.columns.map(c => `<option value="${esc(c)}"${c === r.column ? ' selected' : ''}>${esc(c)}</option>`).join('')}
+            ${FINAL_SCHEMA.map(c => `<option value="${esc(c)}"${c === r.column ? ' selected' : ''}>${esc(c)}</option>`).join('')}
           </select>
         </div>
         <div class="form-group">
@@ -1012,11 +1032,7 @@ document.addEventListener('change', e => {
       } else {
         f.values = f.values.filter(v => v !== val);
       }
-      // Update only the warning indicator without full re-render
-      const warnEl = document.getElementById(`warn-${fid}-${fidx}`);
-      if (warnEl) {
-        warnEl.style.display = f.values.length === 0 ? '' : 'none';
-      }
+      updateExactChips(fid, fidx);
     }
     return;
   }
@@ -1141,6 +1157,21 @@ document.addEventListener('click', e => {
     const fidx = parseInt(el.dataset.fidx, 10);
     fs.filters.splice(fidx, 1);
     rerenderPanel(fid);
+    return;
+  }
+
+  if (action === 'uncheck-exact' && fs) {
+    e.stopPropagation();
+    const fidx = parseInt(el.dataset.fidx, 10);
+    const val = el.dataset.val;
+    const f = fs.filters[fidx];
+    if (f) {
+      f.values = f.values.filter(v => v !== val);
+      // Uncheck the corresponding checkbox without re-render
+      const cbs = document.querySelectorAll(`[data-action="filter-check"][data-fid="${fid}"][data-fidx="${fidx}"]`);
+      for (const cb of cbs) { if (cb.dataset.val === val) { cb.checked = false; break; } }
+      updateExactChips(fid, fidx);
+    }
     return;
   }
 
