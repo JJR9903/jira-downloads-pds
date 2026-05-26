@@ -53,6 +53,39 @@
     font-size: 0.92rem;
   }
 
+  /* Global nav tabs */
+  .global-nav {
+    background: var(--surface2);
+    border-bottom: 1px solid var(--border);
+    position: sticky;
+    top: 0;
+    z-index: 100;
+  }
+  .global-nav-inner {
+    max-width: 1200px;
+    margin: 0 auto;
+    padding: 0 20px;
+    display: flex;
+    gap: 4px;
+  }
+  .global-tab-btn {
+    background: none;
+    border: none;
+    border-bottom: 3px solid transparent;
+    color: var(--text-muted);
+    cursor: pointer;
+    padding: 14px 18px;
+    font-size: 0.9rem;
+    font-weight: 600;
+    transition: color 0.15s, border-color 0.15s;
+    white-space: nowrap;
+  }
+  .global-tab-btn:hover { color: var(--text); }
+  .global-tab-btn.active { color: var(--primary); border-bottom-color: var(--primary); }
+
+  .global-tab-pane { display: none; }
+  .global-tab-pane.active { display: block; }
+
   /* Upload zone */
   .upload-zone {
     border: 2px dashed var(--border);
@@ -430,6 +463,41 @@
   /* Add button row */
   .add-row { margin-bottom: 14px; }
 
+  /* Baseline tab */
+  .baseline-upload-zone {
+    border: 2px dashed var(--border);
+    border-radius: 10px;
+    padding: 36px 20px;
+    text-align: center;
+    cursor: pointer;
+    background: var(--surface);
+    margin-bottom: 24px;
+    position: relative;
+    transition: border-color 0.2s, background 0.2s;
+  }
+  .baseline-upload-zone:hover { border-color: var(--primary); background: #1a2540; }
+  .baseline-upload-zone input[type=file] {
+    position: absolute; inset: 0; opacity: 0; cursor: pointer; width: 100%; height: 100%;
+  }
+  .sheet-section { margin-bottom: 28px; }
+  .sheet-title {
+    font-size: 1rem;
+    font-weight: 600;
+    margin-bottom: 10px;
+    color: var(--text);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .sheet-badge {
+    font-size: 0.72rem;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    color: var(--text-muted);
+    border-radius: 4px;
+    padding: 2px 7px;
+  }
+
   @media (max-width: 640px) {
     .col-map-grid { grid-template-columns: 1fr; }
     .filter-row, .replacement-row { flex-direction: column; }
@@ -439,6 +507,16 @@
 </style>
 </head>
 <body>
+
+<nav class="global-nav">
+  <div class="global-nav-inner">
+    <button class="global-tab-btn active" data-gtab="procesador">📊 Procesador</button>
+    <button class="global-tab-btn" data-gtab="baseline">📋 Baseline</button>
+  </div>
+</nav>
+
+<!-- ═══════════ TAB: Procesador ═══════════ -->
+<div id="gtab-procesador" class="global-tab-pane active">
 <div class="app-container">
   <h1>📊 Procesador Jira CSV</h1>
   <p class="subtitle">
@@ -464,6 +542,28 @@
     <div id="combine-status"></div>
   </div>
 </div>
+</div><!-- /gtab-procesador -->
+
+<!-- ═══════════ TAB: Baseline ═══════════ -->
+<div id="gtab-baseline" class="global-tab-pane">
+<div class="app-container">
+  <h1>📋 Baseline</h1>
+  <p class="subtitle">
+    Sube el archivo Excel de Baseline para cargar las hojas
+    <strong>Baseline</strong> (columnas A:B) y <strong>FI_Baseline</strong> (columnas A:C).
+  </p>
+
+  <div class="baseline-upload-zone" id="baseline-upload-zone">
+    <input type="file" id="baseline-file-input" accept=".xlsx,.xls">
+    <div class="upload-icon">📂</div>
+    <div class="upload-label">Arrastra el archivo Excel aquí o haz clic para seleccionar</div>
+    <div class="upload-hint">Archivo .xlsx con hojas "Baseline" y "FI_Baseline"</div>
+  </div>
+
+  <div id="baseline-status"></div>
+  <div id="baseline-content"></div>
+</div>
+</div><!-- /gtab-baseline -->
 
 <script>
 // ─── Constants ───────────────────────────────────────────────────────────────
@@ -1341,6 +1441,95 @@ uploadZone.addEventListener('drop', e => {
 
 // Initial render
 renderAll();
+
+// ─── Global tab navigation ────────────────────────────────────────────────────
+
+document.querySelectorAll('.global-tab-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    const target = btn.dataset.gtab;
+    document.querySelectorAll('.global-tab-btn').forEach(b => b.classList.toggle('active', b.dataset.gtab === target));
+    document.querySelectorAll('.global-tab-pane').forEach(p => p.classList.toggle('active', p.id === `gtab-${target}`));
+  });
+});
+
+// ─── Baseline Excel reader ────────────────────────────────────────────────────
+
+function readSheetCols(wb, sheetName, maxCol) {
+  const ws = wb.Sheets[sheetName];
+  if (!ws) return null;
+  const ref = ws['!ref'];
+  if (!ref) return [];
+  const range = XLSX.utils.decode_range(ref);
+  range.e.c = maxCol; // clamp to requested columns
+  const rows = XLSX.utils.sheet_to_json(ws, { range, header: 1, defval: '' });
+  if (rows.length === 0) return [];
+  const headers = rows[0].map(String);
+  return rows.slice(1).map(row => {
+    const obj = {};
+    headers.forEach((h, i) => { obj[h] = String(row[i] ?? ''); });
+    return obj;
+  });
+}
+
+function renderBaselineTable(rows, sheetName, colLabel) {
+  if (!rows) {
+    return `<div class="error-msg">No se encontró la hoja <strong>${esc(sheetName)}</strong> en el archivo.</div>`;
+  }
+  if (rows.length === 0) {
+    return `<div class="info-msg">La hoja <strong>${esc(sheetName)}</strong> no contiene datos.</div>`;
+  }
+  const cols = Object.keys(rows[0]);
+  return `
+    <div class="sheet-section">
+      <div class="sheet-title">
+        Hoja: ${esc(sheetName)}
+        <span class="sheet-badge">${esc(colLabel)}</span>
+        <span class="sheet-badge">${rows.length.toLocaleString()} filas</span>
+      </div>
+      ${renderTable(rows, rows.length)}
+    </div>`;
+}
+
+function loadBaselineFile(file) {
+  const statusEl = document.getElementById('baseline-status');
+  const contentEl = document.getElementById('baseline-content');
+  statusEl.innerHTML = '<p class="info-msg">Leyendo archivo…</p>';
+  contentEl.innerHTML = '';
+
+  const reader = new FileReader();
+  reader.onload = e => {
+    try {
+      const wb = XLSX.read(new Uint8Array(e.target.result), { type: 'array' });
+
+      const rowsBaseline   = readSheetCols(wb, 'Baseline',    1); // cols A:B → maxCol index 1
+      const rowsFIBaseline = readSheetCols(wb, 'FI_Baseline', 2); // cols A:C → maxCol index 2
+
+      statusEl.innerHTML = '';
+      contentEl.innerHTML =
+        renderBaselineTable(rowsBaseline,   'Baseline',    'Cols A:B') +
+        renderBaselineTable(rowsFIBaseline, 'FI_Baseline', 'Cols A:C');
+    } catch (err) {
+      statusEl.innerHTML = `<div class="error-msg">Error al leer el archivo: ${esc(err.message)}</div>`;
+    }
+  };
+  reader.readAsArrayBuffer(file);
+}
+
+document.getElementById('baseline-file-input').addEventListener('change', e => {
+  const file = e.target.files[0];
+  if (file) loadBaselineFile(file);
+  e.target.value = '';
+});
+
+const baselineZone = document.getElementById('baseline-upload-zone');
+baselineZone.addEventListener('dragover', e => { e.preventDefault(); baselineZone.style.borderColor = 'var(--primary)'; });
+baselineZone.addEventListener('dragleave', () => { baselineZone.style.borderColor = ''; });
+baselineZone.addEventListener('drop', e => {
+  e.preventDefault();
+  baselineZone.style.borderColor = '';
+  const file = Array.from(e.dataTransfer.files).find(f => f.name.match(/\.xlsx?$/i));
+  if (file) loadBaselineFile(file);
+});
 </script>
 </body>
 </html>
