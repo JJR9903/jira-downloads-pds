@@ -574,15 +574,12 @@ function applyReplacements(data, replacements) {
 }
 
 function processFile(fs) {
-  // 1. Filters — on original source columns
-  let data = applyFilters(fs.data, fs.filters);
-
-  // 2. Column mapping
+  // 1. Column mapping
   const colMap = fs.colMap;
   const mappedEntries = Object.entries(colMap).filter(([src, tgt]) => src && tgt);
   if (mappedEntries.length === 0) return [];
 
-  data = data.map(row => {
+  let data = fs.data.map(row => {
     const out = {};
     for (const [src, tgt] of mappedEntries) {
       out[tgt] = row[src] ?? '';
@@ -599,7 +596,10 @@ function processFile(fs) {
     return out;
   });
 
-  // 3. Replacements — on mapped/target schema columns
+  // 2. Filters — on mapped schema columns
+  data = applyFilters(data, fs.filters);
+
+  // 3. Replacements — on mapped schema columns
   data = applyReplacements(data, fs.replacements);
 
   // 4. Parse/format date columns
@@ -645,6 +645,18 @@ function getUniqueVals(fs, column) {
   return [...seen].sort((a, b) => a.localeCompare(b));
 }
 
+// Get unique values for a FINAL_SCHEMA column by tracing back to its source column.
+function getMappedUniqueVals(fs, schemaCol) {
+  const srcCol = Object.keys(fs.colMap).find(k => fs.colMap[k] === schemaCol);
+  if (!srcCol) return [];
+  const seen = new Set();
+  for (const row of fs.data) {
+    const v = String(row[srcCol] ?? '');
+    seen.add(v);
+  }
+  return [...seen].sort((a, b) => a.localeCompare(b));
+}
+
 function renderColMapTab(fs) {
   const schemaOpts = fs.columns.map(c => `<option value="${esc(c)}">${esc(c)}</option>`).join('');
   let html = '<div class="col-map-grid">';
@@ -666,17 +678,17 @@ function renderColMapTab(fs) {
 
 function renderFiltersTab(fs) {
   let html = `<div class="add-row"><button class="btn btn-secondary" data-action="add-filter" data-fid="${esc(fs.id)}">＋ Agregar filtro</button></div>`;
-  html += '<p class="caption" style="margin-bottom:14px;">Los filtros se aplican <strong>antes</strong> del mapeo de columnas, sobre las columnas originales.</p>';
+  html += '<p class="caption" style="margin-bottom:14px;">Los filtros se aplican <strong>después</strong> del mapeo de columnas, sobre las columnas del esquema destino.</p>';
 
   for (let i = 0; i < fs.filters.length; i++) {
     const f = fs.filters[i];
     html += `<div class="filter-box">
       <div class="filter-row">
         <div class="form-group">
-          <label class="form-label">Columna origen</label>
+          <label class="form-label">Columna destino</label>
           <select data-action="filter-col" data-fid="${esc(fs.id)}" data-fidx="${i}">
             <option value="">(seleccionar)</option>
-            ${fs.columns.map(c => `<option value="${esc(c)}"${c === f.column ? ' selected' : ''}>${esc(c)}</option>`).join('')}
+            ${FINAL_SCHEMA.map(c => `<option value="${esc(c)}"${c === f.column ? ' selected' : ''}>${esc(c)}</option>`).join('')}
           </select>
         </div>
         <div class="form-group">
@@ -699,7 +711,7 @@ function renderFiltersTab(fs) {
 
     if (f.match === 'exact') {
       if (f.column) {
-        const allVals = getUniqueVals(fs, f.column);
+        const allVals = getMappedUniqueVals(fs, f.column);
         const selectedSet = new Set(f.values || []);
         const hasVals = f.values && f.values.length > 0;
         // Chip display for selected values
@@ -724,7 +736,7 @@ function renderFiltersTab(fs) {
               </div>`).join('')}
           </div>`;
       } else {
-        html += `<p class="caption">← Selecciona una columna origen para ver los valores disponibles.</p>`;
+        html += `<p class="caption">← Selecciona una columna destino para ver los valores disponibles.</p>`;
       }
     } else {
       const matchLabel = f.match === 'contains' ? 'contiene' : 'comienza con';

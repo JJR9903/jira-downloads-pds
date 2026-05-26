@@ -130,23 +130,24 @@ def apply_replacements(df: pd.DataFrame, replacements: list) -> pd.DataFrame:
 def process_dataframe(df: pd.DataFrame, config: dict) -> pd.DataFrame:
     df = df.copy()
 
-    df = apply_filters(df, config.get("filters", []))
-    df = apply_replacements(df, config.get("replacements", []))
-
+    # 1. Column mapping
     col_mapping = {
         src: tgt
         for src, tgt in config.get("column_mapping", {}).items()
         if src and tgt and src in df.columns
     }
-
     if not col_mapping:
         return pd.DataFrame(columns=FINAL_SCHEMA)
-
     df = df[list(col_mapping.keys())].rename(columns=col_mapping)
-
     for col in FINAL_SCHEMA:
         if col not in df.columns:
             df[col] = pd.NA
+
+    # 2. Filters — on schema columns (after mapping)
+    df = apply_filters(df, config.get("filters", []))
+
+    # 3. Replacements — on schema columns (after mapping + filters)
+    df = apply_replacements(df, config.get("replacements", []))
 
     for col in DATE_COLUMNS:
         if col in df.columns:
@@ -270,12 +271,15 @@ for f in uploaded_files:
 
         # ── Filtros ───────────────────────────────────────────────────────────
         with tab_filt:
-            st.caption("Los filtros se aplican **antes** del mapeo de columnas, sobre las columnas originales.")
+            st.caption("Los filtros se aplican **después** del mapeo de columnas, sobre las columnas del esquema destino.")
 
             if st.button("＋ Agregar filtro", key=f"{filename}__add_filter"):
                 config["filters"].append(
                     {"column": "", "mode": "include", "match": "exact", "values": []}
                 )
+
+            filt_opts = [""] + FINAL_SCHEMA
+            rev_map   = {tgt: src for src, tgt in config["column_mapping"].items()}
 
             to_remove = []
             for i, filt in enumerate(config["filters"]):
@@ -285,10 +289,10 @@ for f in uploaded_files:
 
                     with c1:
                         prev_col = filt.get("column", "")
-                        idx = src_opts.index(prev_col) if prev_col in src_opts else 0
+                        idx = filt_opts.index(prev_col) if prev_col in filt_opts else 0
                         new_col = st.selectbox(
-                            "Columna origen",
-                            src_opts,
+                            "Columna destino",
+                            filt_opts,
                             index=idx,
                             key=f"{filename}__filt_{i}__col",
                         )
@@ -336,8 +340,9 @@ for f in uploaded_files:
                     col_name = filt.get("column", "")
 
                     if filt["match"] == "exact":
-                        if col_name and col_name in df.columns:
-                            unique_vals   = sorted(df[col_name].dropna().astype(str).unique())
+                        src_col = rev_map.get(col_name, col_name)
+                        if col_name and src_col in df.columns:
+                            unique_vals   = sorted(df[src_col].dropna().astype(str).unique())
                             valid_default = [v for v in filt.get("values", []) if v in unique_vals]
                             filt["values"] = st.multiselect(
                                 "Valores",
@@ -407,21 +412,22 @@ for f in uploaded_files:
         # ── Reemplazos de Valores ─────────────────────────────────────────────
         with tab_rep:
             st.caption(
-                "Los reemplazos se aplican **antes** del mapeo de columnas, sobre las columnas originales."
+                "Los reemplazos se aplican **después** del mapeo de columnas y los filtros, sobre las columnas del esquema destino."
             )
             if st.button("＋ Agregar reemplazo", key=f"{filename}__add_rep"):
                 config["replacements"].append({"column": "", "mode": "specific", "old": "", "new": ""})
 
+            rep_opts = [""] + FINAL_SCHEMA
             to_remove_rep = []
             for i, rep in enumerate(config["replacements"]):
                 with st.container(border=True):
                     r1, r2, r3 = st.columns([2.5, 2.5, 0.5])
 
                     with r1:
-                        idx = src_opts.index(rep["column"]) if rep["column"] in src_opts else 0
+                        idx = rep_opts.index(rep["column"]) if rep["column"] in rep_opts else 0
                         rep["column"] = st.selectbox(
-                            "Columna origen",
-                            src_opts,
+                            "Columna destino",
+                            rep_opts,
                             index=idx,
                             key=f"{filename}__rep_{i}__col",
                         )
