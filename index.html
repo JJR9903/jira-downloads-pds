@@ -1419,11 +1419,33 @@ function runCombine() {
       }
 
       if (allRows.length > 0) {
+        // Convert YYYY-MM-DD strings to Date objects so Excel gets real date cells
+        const dateColIndices = FINAL_SCHEMA
+          .map((h, i) => DATE_COLS.has(h) ? i : -1)
+          .filter(i => i >= 0);
+        const excelRows = allRows.map(row => {
+          const out = { ...row };
+          for (const col of DATE_COLS) {
+            if (col in out) out[col] = parseYMD(out[col]) ?? '';
+          }
+          return out;
+        });
+
         // Build XLSX
         const wb = XLSX.utils.book_new();
-        const ws = XLSX.utils.json_to_sheet(allRows, { header: FINAL_SCHEMA });
+        const ws = XLSX.utils.json_to_sheet(excelRows, { header: FINAL_SCHEMA, cellDates: true });
+
+        // Apply YYYY-MM-DD number format to every date cell
+        const wsRange = XLSX.utils.decode_range(ws['!ref'] || 'A1');
+        for (let r = 1; r <= wsRange.e.r; r++) {
+          for (const c of dateColIndices) {
+            const addr = XLSX.utils.encode_cell({ r, c });
+            if (ws[addr] && ws[addr].t === 'd') ws[addr].z = 'YYYY-MM-DD';
+          }
+        }
+
         XLSX.utils.book_append_sheet(wb, ws, 'Datos');
-        const arrBuf = XLSX.write(wb, { type: 'array', bookType: 'xlsx' });
+        const arrBuf = XLSX.write(wb, { type: 'array', bookType: 'xlsx', cellDates: true });
         combinedBlob = new Blob([arrBuf], {
           type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
         });
