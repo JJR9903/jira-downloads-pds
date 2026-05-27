@@ -1563,7 +1563,7 @@ function computeBaselineMerge(rowsBaseline, rowsDescargas) {
 
     let match;
     if      (inBase && !inDesc)          match = 'Only Baseline';
-    else if (!inBase && inDesc)          match = 'new Issue key';
+    else if (!inBase && inDesc)          match = dueVal !== '' ? 'New Issue key' : 'Empty New Issue key';
     else if (baseVal !== '')             match = 'Old Baseline';
     else if (dueVal  !== '')             match = 'New Baseline';
     else                                 match = 'empty';
