@@ -377,6 +377,52 @@
   }
   .rep-values-row .form-group { flex: 1; min-width: 160px; }
 
+  /* Multi-condition filter */
+  .filter-header-row {
+    display: flex;
+    gap: 10px;
+    align-items: flex-end;
+    flex-wrap: wrap;
+    margin-bottom: 10px;
+  }
+  .filter-header-row .form-group { flex: 0 0 auto; min-width: 110px; }
+  .filter-condition-box {
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 10px 12px;
+    margin-bottom: 8px;
+    background: var(--surface);
+  }
+  .condition-row {
+    display: flex;
+    gap: 10px;
+    align-items: flex-end;
+    flex-wrap: wrap;
+    margin-bottom: 10px;
+  }
+  .condition-row .form-group { flex: 1; min-width: 120px; }
+  .and-separator {
+    text-align: center;
+    font-size: 0.75rem;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    color: var(--warning);
+    padding: 4px 0;
+    margin-bottom: 4px;
+  }
+  .btn-add-condition {
+    background: none;
+    border: 1px dashed var(--border);
+    color: var(--text-muted);
+    border-radius: 6px;
+    padding: 5px 12px;
+    cursor: pointer;
+    font-size: 0.8rem;
+    margin-top: 4px;
+    transition: color 0.15s, border-color 0.15s;
+  }
+  .btn-add-condition:hover { color: var(--text); border-color: var(--primary); }
+
   /* Tables */
   .table-wrap {
     overflow-x: auto;
@@ -662,23 +708,20 @@ function esc(s) {
 function applyFilters(data, filters) {
   let rows = data;
   for (const f of filters) {
-    const { column, mode, match, values } = f;
-    if (!column || !values || values.length === 0) continue;
+    const { mode, conditions } = f;
+    if (!conditions || conditions.length === 0) continue;
     rows = rows.filter(row => {
-      const cell = String(row[column] ?? '');
-      let hit;
-      if (match === 'exact') {
-        hit = values.includes(cell);
-      } else if (match === 'contains') {
+      const allMatch = conditions.every(cond => {
+        const { column, match, values } = cond;
+        if (!column || !values || values.length === 0) return true;
+        const cell = String(row[column] ?? '');
+        if (match === 'exact') return values.includes(cell);
         const cl = cell.toLowerCase();
-        hit = values.some(v => cl.includes(v.toLowerCase()));
-      } else if (match === 'startswith') {
-        const cl = cell.toLowerCase();
-        hit = values.some(v => cl.startsWith(v.toLowerCase()));
-      } else {
-        hit = false;
-      }
-      return mode === 'include' ? hit : !hit;
+        if (match === 'contains')   return values.some(v => cl.includes(v.toLowerCase()));
+        if (match === 'startswith') return values.some(v => cl.startsWith(v.toLowerCase()));
+        return true;
+      });
+      return mode === 'include' ? allMatch : !allMatch;
     });
   }
   return rows;
@@ -750,19 +793,19 @@ function processFile(fs) {
 
 // ─── Render helpers ───────────────────────────────────────────────────────────
 
-function updateExactChips(fid, fidx) {
+function updateExactChips(fid, fidx, cidx) {
   const fs = files.find(f => f.id === fid);
   if (!fs) return;
-  const f = fs.filters[fidx];
-  if (!f) return;
-  const chipsEl = document.getElementById(`exact-chips-${fid}-${fidx}`);
+  const cond = fs.filters[fidx]?.conditions?.[cidx];
+  if (!cond) return;
+  const chipsEl = document.getElementById(`exact-chips-${fid}-${fidx}-${cidx}`);
   if (chipsEl) {
-    chipsEl.innerHTML = (f.values || []).map(v =>
-      `<span class="chip">${esc(v)}<button class="chip-remove" data-action="uncheck-exact" data-fid="${esc(fid)}" data-fidx="${fidx}" data-val="${esc(v)}" title="Eliminar">✕</button></span>`
+    chipsEl.innerHTML = (cond.values || []).map(v =>
+      `<span class="chip">${esc(v)}<button class="chip-remove" data-action="uncheck-exact" data-fid="${esc(fid)}" data-fidx="${fidx}" data-cidx="${cidx}" data-val="${esc(v)}" title="Eliminar">✕</button></span>`
     ).join('');
   }
-  const warnEl = document.getElementById(`warn-${fid}-${fidx}`);
-  if (warnEl) warnEl.style.display = (f.values.length === 0) ? '' : 'none';
+  const warnEl = document.getElementById(`warn-${fid}-${fidx}-${cidx}`);
+  if (warnEl) warnEl.style.display = (cond.values.length === 0) ? '' : 'none';
 }
 
 function getUniqueVals(fs, column) {
@@ -806,21 +849,86 @@ function renderColMapTab(fs) {
   return html;
 }
 
+function renderConditionHTML(fs, fidx, cidx, cond, showRemove) {
+  const matchLabel = cond.match === 'contains' ? 'contiene' : 'comienza con';
+  let html = `<div class="filter-condition-box">
+    <div class="condition-row">
+      <div class="form-group">
+        <label class="form-label">Columna destino</label>
+        <select data-action="filter-col" data-fid="${esc(fs.id)}" data-fidx="${fidx}" data-cidx="${cidx}">
+          <option value="">(seleccionar)</option>
+          ${FINAL_SCHEMA.map(c => `<option value="${esc(c)}"${c === cond.column ? ' selected' : ''}>${esc(c)}</option>`).join('')}
+        </select>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Tipo de coincidencia</label>
+        <select data-action="filter-match" data-fid="${esc(fs.id)}" data-fidx="${fidx}" data-cidx="${cidx}">
+          <option value="exact"${cond.match === 'exact' ? ' selected' : ''}>Es (exacto)</option>
+          <option value="contains"${cond.match === 'contains' ? ' selected' : ''}>Contiene</option>
+          <option value="startswith"${cond.match === 'startswith' ? ' selected' : ''}>Comienza con</option>
+        </select>
+      </div>
+      ${showRemove ? `<button class="btn-danger-sm" data-action="remove-condition" data-fid="${esc(fs.id)}" data-fidx="${fidx}" data-cidx="${cidx}" title="Eliminar condición">🗑</button>` : ''}
+    </div>`;
+
+  if (cond.match === 'exact') {
+    if (cond.column) {
+      const allVals = getMappedUniqueVals(fs, cond.column);
+      const selectedSet = new Set(cond.values || []);
+      const hasVals = cond.values && cond.values.length > 0;
+      const chipsHTML = (cond.values || []).map(v =>
+        `<span class="chip">${esc(v)}<button class="chip-remove" data-action="uncheck-exact" data-fid="${esc(fs.id)}" data-fidx="${fidx}" data-cidx="${cidx}" data-val="${esc(v)}" title="Eliminar">✕</button></span>`
+      ).join('');
+      html += `
+        <div class="chip-area" id="exact-chips-${esc(fs.id)}-${fidx}-${cidx}">${chipsHTML}</div>
+        <div class="warn-msg" id="warn-${esc(fs.id)}-${fidx}-${cidx}" style="${hasVals ? 'display:none;' : ''}">⚠️ Sin valores seleccionados — condición inactiva.</div>
+        <input type="text" class="checkbox-search" placeholder="Buscar valores…"
+          data-action="checkbox-search" data-fid="${esc(fs.id)}" data-fidx="${fidx}" data-cidx="${cidx}">
+        <div class="checkbox-list" id="cblist-${esc(fs.id)}-${fidx}-${cidx}">
+          ${allVals.map(v => `
+            <div class="checkbox-item">
+              <input type="checkbox" id="cb-${esc(fs.id)}-${fidx}-${cidx}-${esc(v)}"
+                data-action="filter-check"
+                data-fid="${esc(fs.id)}"
+                data-fidx="${fidx}"
+                data-cidx="${cidx}"
+                data-val="${esc(v)}"
+                ${selectedSet.has(v) ? 'checked' : ''}>
+              <label for="cb-${esc(fs.id)}-${fidx}-${cidx}-${esc(v)}">${esc(v)}</label>
+            </div>`).join('')}
+        </div>`;
+    } else {
+      html += `<p class="caption">← Selecciona una columna destino para ver los valores disponibles.</p>`;
+    }
+  } else {
+    html += `
+      <div class="chip-input-row">
+        <input type="text" placeholder="Escribe un valor (${esc(matchLabel)}) y presiona ＋ o Enter"
+          data-action="chip-input" data-fid="${esc(fs.id)}" data-fidx="${fidx}" data-cidx="${cidx}"
+          id="chip-inp-${esc(fs.id)}-${fidx}-${cidx}">
+        <button class="btn-add-chip" data-action="add-chip" data-fid="${esc(fs.id)}" data-fidx="${fidx}" data-cidx="${cidx}">＋</button>
+      </div>
+      <div class="chip-area">
+        ${(cond.values || []).map(v => `
+          <span class="chip">${esc(v)}<button class="chip-remove" data-action="remove-chip" data-fid="${esc(fs.id)}" data-fidx="${fidx}" data-cidx="${cidx}" data-val="${esc(v)}" title="Eliminar">✕</button></span>
+        `).join('')}
+      </div>
+      ${(!cond.values || cond.values.length === 0) ? `<div class="warn-msg">⚠️ Sin valores agregados — condición inactiva.</div>` : ''}`;
+  }
+
+  html += `</div>`;
+  return html;
+}
+
 function renderFiltersTab(fs) {
   let html = `<div class="add-row"><button class="btn btn-secondary" data-action="add-filter" data-fid="${esc(fs.id)}">＋ Agregar filtro</button></div>`;
-  html += '<p class="caption" style="margin-bottom:14px;">Los filtros se aplican <strong>después</strong> del mapeo de columnas, sobre las columnas del esquema destino.</p>';
+  html += '<p class="caption" style="margin-bottom:14px;">Los filtros se aplican <strong>después</strong> del mapeo de columnas. Múltiples condiciones dentro de un filtro se combinan con <strong>Y (AND)</strong>.</p>';
 
   for (let i = 0; i < fs.filters.length; i++) {
     const f = fs.filters[i];
+    const conditions = f.conditions || [];
     html += `<div class="filter-box">
-      <div class="filter-row">
-        <div class="form-group">
-          <label class="form-label">Columna destino</label>
-          <select data-action="filter-col" data-fid="${esc(fs.id)}" data-fidx="${i}">
-            <option value="">(seleccionar)</option>
-            ${FINAL_SCHEMA.map(c => `<option value="${esc(c)}"${c === f.column ? ' selected' : ''}>${esc(c)}</option>`).join('')}
-          </select>
-        </div>
+      <div class="filter-header-row">
         <div class="form-group">
           <label class="form-label">Modo</label>
           <select data-action="filter-mode" data-fid="${esc(fs.id)}" data-fidx="${i}">
@@ -828,63 +936,17 @@ function renderFiltersTab(fs) {
             <option value="exclude"${f.mode === 'exclude' ? ' selected' : ''}>Excluir</option>
           </select>
         </div>
-        <div class="form-group">
-          <label class="form-label">Tipo de coincidencia</label>
-          <select data-action="filter-match" data-fid="${esc(fs.id)}" data-fidx="${i}">
-            <option value="exact"${f.match === 'exact' ? ' selected' : ''}>Es (exacto)</option>
-            <option value="contains"${f.match === 'contains' ? ' selected' : ''}>Contiene</option>
-            <option value="startswith"${f.match === 'startswith' ? ' selected' : ''}>Comienza con</option>
-          </select>
-        </div>
-        <button class="btn-danger-sm" data-action="remove-filter" data-fid="${esc(fs.id)}" data-fidx="${i}" title="Eliminar filtro">🗑</button>
+        <button class="btn-danger-sm" data-action="remove-filter" data-fid="${esc(fs.id)}" data-fidx="${i}" title="Eliminar filtro" style="margin-bottom:2px;">🗑 Eliminar filtro</button>
       </div>`;
 
-    if (f.match === 'exact') {
-      if (f.column) {
-        const allVals = getMappedUniqueVals(fs, f.column);
-        const selectedSet = new Set(f.values || []);
-        const hasVals = f.values && f.values.length > 0;
-        // Chip display for selected values
-        const chipsHTML = (f.values || []).map(v =>
-          `<span class="chip">${esc(v)}<button class="chip-remove" data-action="uncheck-exact" data-fid="${esc(fs.id)}" data-fidx="${i}" data-val="${esc(v)}" title="Eliminar">✕</button></span>`
-        ).join('');
-        html += `
-          <div class="chip-area" id="exact-chips-${esc(fs.id)}-${i}">${chipsHTML}</div>
-          <div class="warn-msg" id="warn-${esc(fs.id)}-${i}" style="${hasVals ? 'display:none;' : ''}">⚠️ Sin valores seleccionados — filtro inactivo.</div>
-          <input type="text" class="checkbox-search" placeholder="Buscar valores…"
-            data-action="checkbox-search" data-fid="${esc(fs.id)}" data-fidx="${i}">
-          <div class="checkbox-list" id="cblist-${esc(fs.id)}-${i}">
-            ${allVals.map(v => `
-              <div class="checkbox-item">
-                <input type="checkbox" id="cb-${esc(fs.id)}-${i}-${esc(v)}"
-                  data-action="filter-check"
-                  data-fid="${esc(fs.id)}"
-                  data-fidx="${i}"
-                  data-val="${esc(v)}"
-                  ${selectedSet.has(v) ? 'checked' : ''}>
-                <label for="cb-${esc(fs.id)}-${i}-${esc(v)}">${esc(v)}</label>
-              </div>`).join('')}
-          </div>`;
-      } else {
-        html += `<p class="caption">← Selecciona una columna destino para ver los valores disponibles.</p>`;
+    for (let ci = 0; ci < conditions.length; ci++) {
+      if (ci > 0) {
+        html += `<div class="and-separator">── Y (AND) ──</div>`;
       }
-    } else {
-      const matchLabel = f.match === 'contains' ? 'contiene' : 'comienza con';
-      html += `
-        <div class="chip-input-row">
-          <input type="text" placeholder="Escribe un valor (${esc(matchLabel)}) y presiona ＋ o Enter"
-            data-action="chip-input" data-fid="${esc(fs.id)}" data-fidx="${i}"
-            id="chip-inp-${esc(fs.id)}-${i}">
-          <button class="btn-add-chip" data-action="add-chip" data-fid="${esc(fs.id)}" data-fidx="${i}">＋</button>
-        </div>
-        <div class="chip-area">
-          ${(f.values || []).map((v, ci) => `
-            <span class="chip">${esc(v)}<button class="chip-remove" data-action="remove-chip" data-fid="${esc(fs.id)}" data-fidx="${i}" data-val="${esc(v)}" title="Eliminar">✕</button></span>
-          `).join('')}
-        </div>
-        ${(!f.values || f.values.length === 0) ? `<div class="warn-msg">⚠️ Sin valores agregados — filtro inactivo.</div>` : ''}`;
+      html += renderConditionHTML(fs, i, ci, conditions[ci], conditions.length > 1);
     }
 
+    html += `<button class="btn-add-condition" data-action="add-condition" data-fid="${esc(fs.id)}" data-fidx="${i}">＋ Agregar condición (AND)</button>`;
     html += `</div>`;
   }
 
@@ -1134,10 +1196,11 @@ document.addEventListener('change', e => {
 
   if (action === 'filter-col' && fs) {
     const fidx = parseInt(el.dataset.fidx, 10);
-    const f = fs.filters[fidx];
-    if (f) {
-      if (f.column !== el.value) f.values = [];
-      f.column = el.value;
+    const cidx = parseInt(el.dataset.cidx, 10);
+    const cond = fs.filters[fidx]?.conditions?.[cidx];
+    if (cond) {
+      if (cond.column !== el.value) cond.values = [];
+      cond.column = el.value;
       rerenderPanel(fid);
     }
     return;
@@ -1148,17 +1211,17 @@ document.addEventListener('change', e => {
     const f = fs.filters[fidx];
     if (f) {
       f.mode = el.value;
-      // No re-render needed
     }
     return;
   }
 
   if (action === 'filter-match' && fs) {
     const fidx = parseInt(el.dataset.fidx, 10);
-    const f = fs.filters[fidx];
-    if (f) {
-      if (f.match !== el.value) f.values = [];
-      f.match = el.value;
+    const cidx = parseInt(el.dataset.cidx, 10);
+    const cond = fs.filters[fidx]?.conditions?.[cidx];
+    if (cond) {
+      if (cond.match !== el.value) cond.values = [];
+      cond.match = el.value;
       rerenderPanel(fid);
     }
     return;
@@ -1166,15 +1229,16 @@ document.addEventListener('change', e => {
 
   if (action === 'filter-check' && fs) {
     const fidx = parseInt(el.dataset.fidx, 10);
+    const cidx = parseInt(el.dataset.cidx, 10);
     const val = el.dataset.val;
-    const f = fs.filters[fidx];
-    if (f) {
+    const cond = fs.filters[fidx]?.conditions?.[cidx];
+    if (cond) {
       if (el.checked) {
-        if (!f.values.includes(val)) f.values.push(val);
+        if (!cond.values.includes(val)) cond.values.push(val);
       } else {
-        f.values = f.values.filter(v => v !== val);
+        cond.values = cond.values.filter(v => v !== val);
       }
-      updateExactChips(fid, fidx);
+      updateExactChips(fid, fidx, cidx);
     }
     return;
   }
@@ -1224,8 +1288,9 @@ document.addEventListener('input', e => {
 
   if (action === 'checkbox-search') {
     const fidx = parseInt(el.dataset.fidx, 10);
+    const cidx = parseInt(el.dataset.cidx, 10);
     const query = el.value.toLowerCase();
-    const listEl = document.getElementById(`cblist-${fid}-${fidx}`);
+    const listEl = document.getElementById(`cblist-${fid}-${fidx}-${cidx}`);
     if (listEl) {
       const items = listEl.querySelectorAll('.checkbox-item');
       for (const item of items) {
@@ -1245,14 +1310,15 @@ document.addEventListener('keydown', e => {
 
   const fid = el.dataset.fid;
   const fidx = parseInt(el.dataset.fidx, 10);
+  const cidx = parseInt(el.dataset.cidx, 10);
   const fs = files.find(f => f.id === fid);
   if (!fs) return;
 
   const val = el.value.trim();
   if (val) {
-    const f = fs.filters[fidx];
-    if (f && !f.values.includes(val)) {
-      f.values.push(val);
+    const cond = fs.filters[fidx]?.conditions?.[cidx];
+    if (cond && !cond.values.includes(val)) {
+      cond.values.push(val);
       rerenderPanel(fid);
     }
   }
@@ -1290,7 +1356,7 @@ document.addEventListener('click', e => {
   }
 
   if (action === 'add-filter' && fs) {
-    fs.filters.push({ column: '', mode: 'include', match: 'exact', values: [] });
+    fs.filters.push({ mode: 'include', conditions: [{ column: '', match: 'exact', values: [] }] });
     rerenderPanel(fid);
     return;
   }
@@ -1305,26 +1371,27 @@ document.addEventListener('click', e => {
   if (action === 'uncheck-exact' && fs) {
     e.stopPropagation();
     const fidx = parseInt(el.dataset.fidx, 10);
+    const cidx = parseInt(el.dataset.cidx, 10);
     const val = el.dataset.val;
-    const f = fs.filters[fidx];
-    if (f) {
-      f.values = f.values.filter(v => v !== val);
-      // Uncheck the corresponding checkbox without re-render
-      const cbs = document.querySelectorAll(`[data-action="filter-check"][data-fid="${fid}"][data-fidx="${fidx}"]`);
+    const cond = fs.filters[fidx]?.conditions?.[cidx];
+    if (cond) {
+      cond.values = cond.values.filter(v => v !== val);
+      const cbs = document.querySelectorAll(`[data-action="filter-check"][data-fid="${fid}"][data-fidx="${fidx}"][data-cidx="${cidx}"]`);
       for (const cb of cbs) { if (cb.dataset.val === val) { cb.checked = false; break; } }
-      updateExactChips(fid, fidx);
+      updateExactChips(fid, fidx, cidx);
     }
     return;
   }
 
   if (action === 'add-chip' && fs) {
     const fidx = parseInt(el.dataset.fidx, 10);
-    const inputEl = document.getElementById(`chip-inp-${fid}-${fidx}`);
+    const cidx = parseInt(el.dataset.cidx, 10);
+    const inputEl = document.getElementById(`chip-inp-${fid}-${fidx}-${cidx}`);
     const val = inputEl ? inputEl.value.trim() : '';
     if (val) {
-      const f = fs.filters[fidx];
-      if (f && !f.values.includes(val)) {
-        f.values.push(val);
+      const cond = fs.filters[fidx]?.conditions?.[cidx];
+      if (cond && !cond.values.includes(val)) {
+        cond.values.push(val);
         rerenderPanel(fid);
       }
     }
@@ -1333,10 +1400,32 @@ document.addEventListener('click', e => {
 
   if (action === 'remove-chip' && fs) {
     const fidx = parseInt(el.dataset.fidx, 10);
+    const cidx = parseInt(el.dataset.cidx, 10);
     const val = el.dataset.val;
+    const cond = fs.filters[fidx]?.conditions?.[cidx];
+    if (cond) {
+      cond.values = cond.values.filter(v => v !== val);
+      rerenderPanel(fid);
+    }
+    return;
+  }
+
+  if (action === 'add-condition' && fs) {
+    const fidx = parseInt(el.dataset.fidx, 10);
     const f = fs.filters[fidx];
     if (f) {
-      f.values = f.values.filter(v => v !== val);
+      f.conditions.push({ column: '', match: 'exact', values: [] });
+      rerenderPanel(fid);
+    }
+    return;
+  }
+
+  if (action === 'remove-condition' && fs) {
+    const fidx = parseInt(el.dataset.fidx, 10);
+    const cidx = parseInt(el.dataset.cidx, 10);
+    const f = fs.filters[fidx];
+    if (f && f.conditions.length > 1) {
+      f.conditions.splice(cidx, 1);
       rerenderPanel(fid);
     }
     return;
