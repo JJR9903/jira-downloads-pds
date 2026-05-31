@@ -423,6 +423,37 @@
   }
   .btn-add-condition:hover { color: var(--text); border-color: var(--primary); }
 
+  /* Preset bar */
+  .preset-bar {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    flex-wrap: wrap;
+    padding: 10px 12px;
+    margin-bottom: 14px;
+    background: var(--surface2);
+    border-radius: 8px;
+    border: 1px solid var(--border);
+  }
+  .preset-bar select { flex: 1; min-width: 160px; }
+  .preset-bar .btn { flex-shrink: 0; }
+
+  /* Copy-to-files panel */
+  .copy-panel {
+    border: 1px dashed var(--primary);
+    border-radius: 8px;
+    padding: 12px 14px;
+    margin-top: 10px;
+    background: var(--surface);
+  }
+  .copy-panel .panel-title {
+    font-size: 0.82rem;
+    font-weight: 600;
+    color: var(--text-muted);
+    margin-bottom: 8px;
+  }
+  .copy-panel .copy-actions { display: flex; gap: 8px; margin-top: 10px; }
+
   /* Tables */
   .table-wrap {
     overflow-x: auto;
@@ -660,6 +691,11 @@ let combinedBlob = null;
 let lastMergeResult   = null; // stores latest Baseline ↔ Descargas merge
 let lastFIMergeResult = null; // stores latest FI_Baseline ↔ Descargas merge
 let baselineSheets    = null; // { baseline, fiBaseline, descargas } loaded from Excel
+let filterPresets = JSON.parse(localStorage.getItem('jiraFilterPresets') || '{}');
+
+function savePresetsToStorage() {
+  localStorage.setItem('jiraFilterPresets', JSON.stringify(filterPresets));
+}
 
 // ─── Date helpers ─────────────────────────────────────────────────────────────
 
@@ -921,8 +957,44 @@ function renderConditionHTML(fs, fidx, cidx, cond, showRemove) {
 }
 
 function renderFiltersTab(fs) {
+  const presetNames = Object.keys(filterPresets);
+  const hasFilters  = fs.filters.length > 0;
+  const hasOthers   = files.filter(f => f.id !== fs.id).length > 0;
+
   let html = `<div class="add-row"><button class="btn btn-secondary" data-action="add-filter" data-fid="${esc(fs.id)}">＋ Agregar filtro</button></div>`;
   html += '<p class="caption" style="margin-bottom:14px;">Los filtros se aplican <strong>después</strong> del mapeo de columnas. Múltiples condiciones dentro de un filtro se combinan con <strong>Y (AND)</strong>.</p>';
+
+  // Preset bar
+  html += `<div class="preset-bar">
+    <button class="btn btn-secondary" data-action="save-preset" data-fid="${esc(fs.id)}"
+      title="${hasFilters ? 'Guardar los filtros actuales como un preset reutilizable' : 'Agrega filtros primero'}"
+      ${!hasFilters ? 'disabled' : ''}>💾 Guardar preset</button>
+    <select data-action="apply-preset-select" data-fid="${esc(fs.id)}" title="Aplicar un preset guardado (reemplaza los filtros actuales)">
+      <option value="">📋 Aplicar preset…</option>
+      ${presetNames.map(n => `<option value="${esc(n)}">${esc(n)}</option>`).join('')}
+    </select>
+    ${presetNames.length > 0 ? `<button class="btn-danger-sm" data-action="delete-preset" data-fid="${esc(fs.id)}" title="Eliminar el preset seleccionado en el dropdown">🗑 Preset</button>` : ''}
+    ${hasOthers ? `<button class="btn btn-secondary" data-action="copy-filters" data-fid="${esc(fs.id)}"
+      title="${hasFilters ? 'Copiar los filtros de este archivo a otros archivos cargados' : 'Agrega filtros primero'}"
+      ${!hasFilters ? 'disabled' : ''}>📤 Copiar a otros</button>` : ''}
+  </div>`;
+
+  // Copy-to-files panel
+  if (fs.showCopyPanel) {
+    const otherFiles = files.filter(f => f.id !== fs.id);
+    html += `<div class="copy-panel">
+      <div class="panel-title">Selecciona los archivos a los que copiar estos filtros:</div>
+      ${otherFiles.map(f => `
+        <div class="checkbox-item">
+          <input type="checkbox" id="copy-to-${esc(f.id)}" data-target-fid="${esc(f.id)}" checked>
+          <label for="copy-to-${esc(f.id)}">${esc(f.name)}</label>
+        </div>`).join('')}
+      <div class="copy-actions">
+        <button class="btn btn-primary" data-action="copy-filters-apply" data-fid="${esc(fs.id)}">✓ Aplicar a seleccionados</button>
+        <button class="btn btn-secondary" data-action="copy-filters" data-fid="${esc(fs.id)}">Cancelar</button>
+      </div>
+    </div>`;
+  }
 
   for (let i = 0; i < fs.filters.length; i++) {
     const f = fs.filters[i];
@@ -1159,6 +1231,7 @@ function loadFile(file) {
         activeTab: 'map',
         preview: null,
         previewError: null,
+        showCopyPanel: false,
       });
       renderAll();
     },
@@ -1240,6 +1313,20 @@ document.addEventListener('change', e => {
       }
       updateExactChips(fid, fidx, cidx);
     }
+    return;
+  }
+
+  if (action === 'apply-preset-select' && fs) {
+    const name = el.value;
+    if (!name) return;
+    if (!filterPresets[name]) return;
+    if (fs.filters.length > 0 && !confirm(`¿Reemplazar los filtros actuales con el preset "${name}"?`)) {
+      el.value = '';
+      return;
+    }
+    fs.filters = JSON.parse(JSON.stringify(filterPresets[name]));
+    el.value = '';
+    rerenderPanel(fid);
     return;
   }
 
@@ -1407,6 +1494,48 @@ document.addEventListener('click', e => {
       cond.values = cond.values.filter(v => v !== val);
       rerenderPanel(fid);
     }
+    return;
+  }
+
+  if (action === 'save-preset' && fs) {
+    if (fs.filters.length === 0) { alert('No hay filtros para guardar.'); return; }
+    const name = prompt('Nombre del preset de filtros:', '');
+    if (!name || !name.trim()) return;
+    filterPresets[name.trim()] = JSON.parse(JSON.stringify(fs.filters));
+    savePresetsToStorage();
+    rerenderPanel(fid);
+    return;
+  }
+
+  if (action === 'delete-preset') {
+    const selectEl = document.querySelector(`select[data-action="apply-preset-select"][data-fid="${fid}"]`);
+    const name = selectEl ? selectEl.value : '';
+    if (!name) { alert('Selecciona un preset del dropdown para eliminarlo.'); return; }
+    if (!confirm(`¿Eliminar el preset "${name}"?`)) return;
+    delete filterPresets[name];
+    savePresetsToStorage();
+    renderAll();
+    return;
+  }
+
+  if (action === 'copy-filters' && fs) {
+    fs.showCopyPanel = !fs.showCopyPanel;
+    rerenderPanel(fid);
+    return;
+  }
+
+  if (action === 'copy-filters-apply' && fs) {
+    const panelEl = e.target.closest('.copy-panel');
+    const targetIds = panelEl
+      ? [...panelEl.querySelectorAll('input[type=checkbox]:checked')].map(cb => cb.dataset.targetFid)
+      : [];
+    const filtersCopy = JSON.parse(JSON.stringify(fs.filters));
+    for (const targetId of targetIds) {
+      const target = files.find(f => f.id === targetId);
+      if (target) target.filters = JSON.parse(JSON.stringify(filtersCopy));
+    }
+    fs.showCopyPanel = false;
+    renderAll();
     return;
   }
 

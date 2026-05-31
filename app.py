@@ -169,10 +169,11 @@ def to_excel_bytes(df: pd.DataFrame) -> bytes:
 # ── Session state ──────────────────────────────────────────────────────────────
 
 for key, default in [
-    ("file_configs", {}),
-    ("file_data",    {}),
-    ("xlsx_bytes",   None),
-    ("final_shape",  None),
+    ("file_configs",    {}),
+    ("file_data",       {}),
+    ("xlsx_bytes",      None),
+    ("final_shape",     None),
+    ("filter_presets",  {}),
 ]:
     if key not in st.session_state:
         st.session_state[key] = default
@@ -279,10 +280,74 @@ with tab_procesador:
                 with tab_filt:
                     st.caption("Los filtros se aplican **después** del mapeo de columnas, sobre las columnas del esquema destino.")
 
-                    if st.button("＋ Agregar filtro", key=f"{filename}__add_filter"):
-                        config["filters"].append(
-                            {"mode": "include", "conditions": [{"column": "", "match": "exact", "values": []}]}
+                    # ── Preset bar ────────────────────────────────────────────
+                    preset_names = list(st.session_state.filter_presets.keys())
+                    p1, p2, p3, p4 = st.columns([2, 3, 2, 2])
+                    with p1:
+                        if st.button("＋ Agregar filtro", key=f"{filename}__add_filter"):
+                            config["filters"].append(
+                                {"mode": "include", "conditions": [{"column": "", "match": "exact", "values": []}]}
+                            )
+                    with p2:
+                        chosen_preset = st.selectbox(
+                            "Aplicar preset",
+                            [""] + preset_names,
+                            index=0,
+                            label_visibility="collapsed",
+                            placeholder="📋 Aplicar preset…",
+                            key=f"{filename}__apply_preset",
                         )
+                        if chosen_preset:
+                            if not config["filters"] or st.session_state.get(f"{filename}__preset_confirmed"):
+                                import copy
+                                config["filters"] = copy.deepcopy(st.session_state.filter_presets[chosen_preset])
+                                st.session_state[f"{filename}__preset_confirmed"] = False
+                                st.rerun()
+                    with p3:
+                        save_name = st.text_input(
+                            "Nombre del preset",
+                            label_visibility="collapsed",
+                            placeholder="Nombre para guardar…",
+                            key=f"{filename}__preset_save_name",
+                        )
+                    with p4:
+                        if st.button("💾 Guardar preset", key=f"{filename}__save_preset"):
+                            if not config["filters"]:
+                                st.warning("Agrega filtros primero.")
+                            elif not save_name.strip():
+                                st.warning("Escribe un nombre para el preset.")
+                            else:
+                                import copy
+                                st.session_state.filter_presets[save_name.strip()] = copy.deepcopy(config["filters"])
+                                st.success(f"Preset «{save_name.strip()}» guardado.")
+
+                    # Copy to other files
+                    other_files = [n for n in st.session_state.file_configs if n != filename]
+                    if other_files and config["filters"]:
+                        with st.expander("📤 Copiar filtros a otros archivos"):
+                            targets = st.multiselect(
+                                "Archivos destino",
+                                other_files,
+                                default=other_files,
+                                key=f"{filename}__copy_targets",
+                            )
+                            if st.button("Aplicar a seleccionados", key=f"{filename}__copy_apply"):
+                                import copy
+                                for t in targets:
+                                    st.session_state.file_configs[t]["filters"] = copy.deepcopy(config["filters"])
+                                st.success(f"Filtros copiados a {len(targets)} archivo(s).")
+
+                    if preset_names:
+                        with st.expander("🗑 Eliminar preset"):
+                            del_name = st.selectbox(
+                                "Preset a eliminar",
+                                preset_names,
+                                key=f"{filename}__del_preset_sel",
+                            )
+                            if st.button("Eliminar", key=f"{filename}__del_preset_btn"):
+                                del st.session_state.filter_presets[del_name]
+                                st.rerun()
+                    st.divider()
 
                     filt_opts = [""] + FINAL_SCHEMA
                     rev_map   = {tgt: src for src, tgt in config["column_mapping"].items()}
