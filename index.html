@@ -454,6 +454,66 @@
   }
   .copy-panel .copy-actions { display: flex; gap: 8px; margin-top: 10px; }
 
+  /* Global post-merge filters section */
+  .global-proc-section {
+    border: 1px solid var(--primary);
+    border-radius: 10px;
+    padding: 0;
+    margin: 24px 0;
+    background: var(--surface);
+    overflow: hidden;
+  }
+  .global-proc-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 14px 18px;
+    background: var(--surface2);
+    cursor: pointer;
+    user-select: none;
+    gap: 12px;
+  }
+  .global-proc-header:hover { background: #2a2e40; }
+  .global-proc-title {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-weight: 600;
+    font-size: 0.95rem;
+  }
+  .global-proc-badge {
+    background: #1c3f6e;
+    color: #90caff;
+    border: 1px solid #2d6aa0;
+    border-radius: 100px;
+    padding: 2px 10px;
+    font-size: 0.72rem;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+  }
+  .global-proc-body { padding: 16px 18px; }
+  .global-proc-tabs {
+    display: flex;
+    gap: 4px;
+    margin-bottom: 14px;
+    border-bottom: 1px solid var(--border);
+    padding-bottom: 0;
+  }
+  .global-proc-tab-btn {
+    background: none;
+    border: none;
+    border-bottom: 3px solid transparent;
+    color: var(--text-muted);
+    cursor: pointer;
+    padding: 8px 14px;
+    font-size: 0.85rem;
+    font-weight: 500;
+    margin-bottom: -1px;
+    transition: color 0.15s, border-color 0.15s;
+  }
+  .global-proc-tab-btn:hover { color: var(--text); }
+  .global-proc-tab-btn.active { color: var(--primary); border-bottom-color: var(--primary); }
+
   /* Tables */
   .table-wrap {
     overflow-x: auto;
@@ -610,6 +670,23 @@
 
   <div id="panels-container"></div>
 
+  <div class="global-proc-section" id="global-proc-section" style="display:none;">
+    <div class="global-proc-header" data-action="toggle-global-proc">
+      <div class="global-proc-title">
+        ⚙️ Procesamiento global
+        <span class="global-proc-badge">post-merge</span>
+      </div>
+      <span id="global-proc-chevron">▼</span>
+    </div>
+    <div class="global-proc-body" id="global-proc-body">
+      <p class="caption" style="margin-bottom:14px;">
+        Filtros y reemplazos aplicados al resultado combinado de <strong>todos los archivos</strong>,
+        después del mapeo y filtros por archivo. Ideal para condiciones comunes a todos los archivos.
+      </p>
+      <div id="global-section-content"></div>
+    </div>
+  </div>
+
   <div id="combine-section" class="combine-section" style="display:none;">
     <h2>Combinar y Descargar</h2>
     <div class="combine-actions">
@@ -696,6 +773,19 @@ let filterPresets = JSON.parse(localStorage.getItem('jiraFilterPresets') || '{}'
 function savePresetsToStorage() {
   localStorage.setItem('jiraFilterPresets', JSON.stringify(filterPresets));
 }
+
+// Global post-merge processing state
+const globalState = {
+  id: '__global__',
+  filters: [],
+  replacements: [],
+  showCopyPanel: false,
+  activeTab: 'filt',
+  data: [],        // populated after runCombine(); enables exact-match checkboxes
+  colMap: {},      // identity: schemaCol → schemaCol
+  columns: FINAL_SCHEMA.slice(),
+};
+for (const c of FINAL_SCHEMA) globalState.colMap[c] = c;
 
 // ─── Date helpers ─────────────────────────────────────────────────────────────
 
@@ -830,7 +920,7 @@ function processFile(fs) {
 // ─── Render helpers ───────────────────────────────────────────────────────────
 
 function updateExactChips(fid, fidx, cidx) {
-  const fs = files.find(f => f.id === fid);
+  const fs = (fid === '__global__') ? globalState : files.find(f => f.id === fid);
   if (!fs) return;
   const cond = fs.filters[fidx]?.conditions?.[cidx];
   if (!cond) return;
@@ -974,7 +1064,7 @@ function renderFiltersTab(fs) {
       ${presetNames.map(n => `<option value="${esc(n)}">${esc(n)}</option>`).join('')}
     </select>
     ${presetNames.length > 0 ? `<button class="btn-danger-sm" data-action="delete-preset" data-fid="${esc(fs.id)}" title="Eliminar el preset seleccionado en el dropdown">🗑 Preset</button>` : ''}
-    ${hasOthers ? `<button class="btn btn-secondary" data-action="copy-filters" data-fid="${esc(fs.id)}"
+    ${(hasOthers && fs.id !== '__global__') ? `<button class="btn btn-secondary" data-action="copy-filters" data-fid="${esc(fs.id)}"
       title="${hasFilters ? 'Copiar los filtros de este archivo a otros archivos cargados' : 'Agrega filtros primero'}"
       ${!hasFilters ? 'disabled' : ''}>📤 Copiar a otros</button>` : ''}
   </div>`;
@@ -1175,13 +1265,40 @@ function renderPanel(fs) {
 
 // ─── Full render / targeted re-render ────────────────────────────────────────
 
+function renderGlobalSection() {
+  const el = document.getElementById('global-section-content');
+  if (!el) return;
+  const tabs = [
+    { id: 'filt', label: '🔍 Filtros globales' },
+    { id: 'rep',  label: '✏️ Reemplazos globales' },
+  ];
+  let html = `<div class="global-proc-tabs">`;
+  for (const t of tabs) {
+    html += `<button class="global-proc-tab-btn${globalState.activeTab === t.id ? ' active' : ''}"
+      data-action="switch-global-tab" data-tab="${t.id}">${t.label}</button>`;
+  }
+  html += `</div>`;
+  if (globalState.activeTab === 'filt') {
+    if (globalState.data.length === 0 && globalState.filters.length === 0) {
+      html += `<p class="caption" style="margin-bottom:12px;">💡 Los valores disponibles para filtros de tipo <strong>exacto</strong> se cargarán después de ejecutar <strong>Procesar y combinar</strong> por primera vez.</p>`;
+    }
+    html += renderFiltersTab(globalState);
+  } else {
+    html += renderReplacementsTab(globalState);
+  }
+  el.innerHTML = html;
+}
+
 function renderAll() {
   const container = document.getElementById('panels-container');
   container.innerHTML = files.map(renderPanel).join('');
   document.getElementById('combine-section').style.display = files.length > 0 ? '' : 'none';
+  document.getElementById('global-proc-section').style.display = files.length > 0 ? '' : 'none';
+  renderGlobalSection();
 }
 
 function rerenderPanel(fid) {
+  if (fid === '__global__') { renderGlobalSection(); return; }
   const fs = files.find(f => f.id === fid);
   if (!fs) return;
   const el = document.getElementById(`panel-${fid}`);
@@ -1249,7 +1366,7 @@ document.addEventListener('change', e => {
   if (!action) return;
 
   const fid = el.dataset.fid;
-  const fs = files.find(f => f.id === fid);
+  const fs = (fid === '__global__') ? globalState : files.find(f => f.id === fid);
 
   if (action === 'col-map' && fs) {
     const tgt = el.dataset.tgt;
@@ -1357,7 +1474,7 @@ document.addEventListener('input', e => {
   if (!action) return;
 
   const fid = el.dataset.fid;
-  const fs = files.find(f => f.id === fid);
+  const fs = (fid === '__global__') ? globalState : files.find(f => f.id === fid);
 
   if (action === 'rep-oldval' && fs) {
     const ridx = parseInt(el.dataset.ridx, 10);
@@ -1398,7 +1515,7 @@ document.addEventListener('keydown', e => {
   const fid = el.dataset.fid;
   const fidx = parseInt(el.dataset.fidx, 10);
   const cidx = parseInt(el.dataset.cidx, 10);
-  const fs = files.find(f => f.id === fid);
+  const fs = (fid === '__global__') ? globalState : files.find(f => f.id === fid);
   if (!fs) return;
 
   const val = el.value.trim();
@@ -1417,7 +1534,24 @@ document.addEventListener('click', e => {
   if (!el) return;
   const action = el.dataset.action;
   const fid = el.dataset.fid;
-  const fs = fid ? files.find(f => f.id === fid) : null;
+  const fs = fid === '__global__' ? globalState : (fid ? files.find(f => f.id === fid) : null);
+
+  if (action === 'switch-global-tab') {
+    globalState.activeTab = el.dataset.tab;
+    renderGlobalSection();
+    return;
+  }
+
+  if (action === 'toggle-global-proc') {
+    const body = document.getElementById('global-proc-body');
+    const chevron = document.getElementById('global-proc-chevron');
+    if (body) {
+      const hidden = body.style.display === 'none';
+      body.style.display = hidden ? '' : 'none';
+      if (chevron) chevron.textContent = hidden ? '▼' : '▶';
+    }
+    return;
+  }
 
   if (action === 'toggle-panel' && fs) {
     fs.expanded = !fs.expanded;
@@ -1660,6 +1794,22 @@ function runCombine() {
       let html = '';
       if (errors.length > 0) {
         html += errors.map(e => `<div class="error-msg" style="margin-bottom:8px;">${e}</div>`).join('');
+      }
+
+      // Update globalState.data so exact-match checkboxes work after first run
+      globalState.data = allRows;
+      renderGlobalSection();
+
+      // Apply global filters and replacements
+      const preGlobalCount = allRows.length;
+      allRows = applyFilters(allRows, globalState.filters);
+      allRows = applyReplacements(allRows, globalState.replacements);
+      const postGlobalCount = allRows.length;
+      if (globalState.filters.length > 0 || globalState.replacements.length > 0) {
+        const diff = preGlobalCount - postGlobalCount;
+        html += diff > 0
+          ? `<div class="info-msg" style="margin-bottom:8px;">🔍 Filtros globales: ${diff.toLocaleString()} fila(s) eliminadas → ${postGlobalCount.toLocaleString()} filas restantes</div>`
+          : `<div class="info-msg" style="margin-bottom:8px;">🔍 Filtros globales aplicados (sin cambios en el conteo de filas)</div>`;
       }
 
       if (allRows.length > 0) {

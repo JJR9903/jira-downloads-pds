@@ -169,11 +169,13 @@ def to_excel_bytes(df: pd.DataFrame) -> bytes:
 # ── Session state ──────────────────────────────────────────────────────────────
 
 for key, default in [
-    ("file_configs",    {}),
-    ("file_data",       {}),
-    ("xlsx_bytes",      None),
-    ("final_shape",     None),
-    ("filter_presets",  {}),
+    ("file_configs",      {}),
+    ("file_data",         {}),
+    ("xlsx_bytes",        None),
+    ("final_shape",       None),
+    ("filter_presets",    {}),
+    ("global_filters",    []),
+    ("global_replacements", []),
 ]:
     if key not in st.session_state:
         st.session_state[key] = default
@@ -581,6 +583,154 @@ with tab_procesador:
                         else:
                             st.info("Haz clic en ▶ Ver vista previa para ver el resultado procesado.")
 
+        # ── Procesamiento global (post-merge) ─────────────────────────────────
+
+        st.divider()
+        with st.expander("⚙️ Procesamiento global (post-merge)", expanded=False):
+            st.caption(
+                "Filtros y reemplazos aplicados al resultado combinado de **todos los archivos**, "
+                "después del mapeo y filtros por archivo. Ideal para condiciones comunes a todos los archivos."
+            )
+
+            gf_tab, gr_tab = st.tabs(["🔍 Filtros globales", "✏️ Reemplazos globales"])
+
+            with gf_tab:
+                gfilters = st.session_state.global_filters
+                if st.button("＋ Agregar filtro global", key="__global__add_filter"):
+                    gfilters.append({"mode": "include", "conditions": [{"column": "", "match": "exact", "values": []}]})
+
+                filt_opts  = [""] + FINAL_SCHEMA
+                match_opts = ["exact", "contains", "startswith"]
+                match_lbls = {"exact": "Es (exacto)", "contains": "Contiene", "startswith": "Comienza con"}
+                match_es   = {"contains": "contiene", "startswith": "comienza con"}
+
+                gf_to_remove = []
+                for i, filt in enumerate(gfilters):
+                    if "conditions" not in filt:
+                        filt["conditions"] = [{"column": filt.pop("column", ""), "match": filt.pop("match", "exact"), "values": filt.pop("values", [])}]
+
+                    with st.container(border=True):
+                        h1, h2 = st.columns([2, 0.5])
+                        with h1:
+                            modes     = ["include", "exclude"]
+                            mode_lbls = {"include": "Incluir", "exclude": "Excluir"}
+                            midx = modes.index(filt.get("mode", "include"))
+                            filt["mode"] = st.selectbox("Modo", modes, index=midx, format_func=lambda k: mode_lbls[k], key=f"__gf_{i}__mode")
+                        with h2:
+                            st.markdown("<br>", unsafe_allow_html=True)
+                            if st.button("🗑 Filtro", key=f"__gf_{i}__rm"):
+                                gf_to_remove.append(i)
+
+                        gcond_remove = []
+                        for ci, cond in enumerate(filt["conditions"]):
+                            if ci > 0:
+                                st.markdown("**── Y (AND) ──**")
+                            with st.container(border=True):
+                                cc1, cc2, cc3 = st.columns([2.8, 1.8, 0.5])
+                                with cc1:
+                                    prev_col = cond.get("column", "")
+                                    idx = filt_opts.index(prev_col) if prev_col in filt_opts else 0
+                                    new_col = st.selectbox("Columna", filt_opts, index=idx, key=f"__gf_{i}_c{ci}__col")
+                                    if new_col != prev_col:
+                                        cond["values"] = []
+                                    cond["column"] = new_col
+                                with cc2:
+                                    prev_match = cond.get("match", "exact")
+                                    maidx = match_opts.index(prev_match) if prev_match in match_opts else 0
+                                    new_match = st.selectbox("Tipo", match_opts, index=maidx, format_func=lambda k: match_lbls[k], key=f"__gf_{i}_c{ci}__match")
+                                    if new_match != prev_match:
+                                        cond["values"] = []
+                                    cond["match"] = new_match
+                                with cc3:
+                                    st.markdown("<br>", unsafe_allow_html=True)
+                                    if len(filt["conditions"]) > 1 and st.button("🗑", key=f"__gf_{i}_c{ci}__rm"):
+                                        gcond_remove.append(ci)
+
+                                if cond["match"] == "exact":
+                                    inp_key = f"__gf_{i}_c{ci}__chip_input"
+                                    def _add_gchip(_key=inp_key, _vals=cond["values"]):
+                                        val = st.session_state.get(_key, "").strip()
+                                        if val and val not in _vals:
+                                            _vals.append(val)
+                                        st.session_state[_key] = ""
+                                    ic, bc = st.columns([5, 1])
+                                    with ic:
+                                        st.text_input("Valor exacto", label_visibility="collapsed", placeholder="Escribe un valor exacto…", key=inp_key)
+                                    with bc:
+                                        st.button("＋", key=f"__gf_{i}_c{ci}__add_chip", on_click=_add_gchip, use_container_width=True)
+                                    if cond["values"]:
+                                        per_row = 5
+                                        for ri, chunk in enumerate([cond["values"][s:s+per_row] for s in range(0, len(cond["values"]), per_row)]):
+                                            cols = st.columns(per_row)
+                                            for j, v in enumerate(chunk):
+                                                if cols[j].button(f"✕  {v}", key=f"__gf_{i}_c{ci}__chip_{ri*per_row+j}", use_container_width=True):
+                                                    cond["values"].pop(ri*per_row+j)
+                                    else:
+                                        st.caption("⚠️ Sin valores — condición inactiva.")
+                                else:
+                                    inp_key = f"__gf_{i}_c{ci}__chip_input"
+                                    def _add_gchip2(_key=inp_key, _vals=cond["values"]):
+                                        val = st.session_state.get(_key, "").strip()
+                                        if val and val not in _vals:
+                                            _vals.append(val)
+                                        st.session_state[_key] = ""
+                                    ic, bc = st.columns([5, 1])
+                                    with ic:
+                                        st.text_input("Valor", label_visibility="collapsed", placeholder=f"({match_es.get(cond['match'],'')})…", key=inp_key)
+                                    with bc:
+                                        st.button("＋", key=f"__gf_{i}_c{ci}__add_chip2", on_click=_add_gchip2, use_container_width=True)
+                                    if cond["values"]:
+                                        per_row = 5
+                                        for ri, chunk in enumerate([cond["values"][s:s+per_row] for s in range(0, len(cond["values"]), per_row)]):
+                                            cols = st.columns(per_row)
+                                            for j, v in enumerate(chunk):
+                                                if cols[j].button(f"✕  {v}", key=f"__gf_{i}_c{ci}__chip2_{ri*per_row+j}", use_container_width=True):
+                                                    cond["values"].pop(ri*per_row+j)
+                                    else:
+                                        st.caption("⚠️ Sin valores — condición inactiva.")
+
+                        for ci in reversed(gcond_remove):
+                            filt["conditions"].pop(ci)
+                        if st.button("＋ Agregar condición (AND)", key=f"__gf_{i}__add_cond"):
+                            filt["conditions"].append({"column": "", "match": "exact", "values": []})
+
+                for i in reversed(gf_to_remove):
+                    gfilters.pop(i)
+
+            with gr_tab:
+                greps = st.session_state.global_replacements
+                if st.button("＋ Agregar reemplazo global", key="__global__add_rep"):
+                    greps.append({"column": "", "mode": "specific", "old": "", "new": ""})
+
+                rep_opts   = [""] + FINAL_SCHEMA
+                gr_to_remove = []
+                for i, rep in enumerate(greps):
+                    with st.container(border=True):
+                        r1, r2, r3 = st.columns([2.5, 2.5, 0.5])
+                        with r1:
+                            idx = rep_opts.index(rep["column"]) if rep["column"] in rep_opts else 0
+                            rep["column"] = st.selectbox("Columna destino", rep_opts, index=idx, key=f"__gr_{i}__col")
+                        with r2:
+                            modes = ["specific", "overwrite"]
+                            mode_lbls2 = {"specific": "Reemplazar un valor específico", "overwrite": "Establecer toda la columna a un valor fijo"}
+                            midx = modes.index(rep.get("mode", "specific"))
+                            rep["mode"] = st.selectbox("Tipo", modes, index=midx, format_func=lambda k: mode_lbls2[k], key=f"__gr_{i}__mode")
+                        with r3:
+                            st.markdown("<br>", unsafe_allow_html=True)
+                            if st.button("🗑", key=f"__gr_{i}__rm"):
+                                gr_to_remove.append(i)
+                        if rep["mode"] == "specific":
+                            v1, v2 = st.columns(2)
+                            with v1:
+                                rep["old"] = st.text_input("Reemplazar", value=rep.get("old", ""), key=f"__gr_{i}__old")
+                            with v2:
+                                rep["new"] = st.text_input("Con", value=rep.get("new", ""), key=f"__gr_{i}__new")
+                        else:
+                            rep["new"] = st.text_input("Valor fijo", value=rep.get("new", ""), key=f"__gr_{i}__new_ow")
+
+                for i in reversed(gr_to_remove):
+                    greps.pop(i)
+
         # ── Combinar y Descargar ───────────────────────────────────────────────
 
         st.divider()
@@ -611,6 +761,13 @@ with tab_procesador:
 
                 if all_dfs:
                     final_df = pd.concat(all_dfs, ignore_index=True)
+                    pre_count = len(final_df)
+                    # Apply global post-merge filters and replacements
+                    final_df = apply_filters(final_df, st.session_state.global_filters)
+                    final_df = apply_replacements(final_df, st.session_state.global_replacements)
+                    post_count = len(final_df)
+                    if pre_count != post_count:
+                        st.info(f"🔍 Filtros globales: {pre_count - post_count:,} fila(s) eliminadas → {post_count:,} filas restantes")
                     st.session_state.xlsx_bytes = to_excel_bytes(final_df)
                     st.session_state.final_shape = final_df.shape
                     st.success(
